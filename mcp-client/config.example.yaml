@@ -1,0 +1,40 @@
+# ═══════════════════════════════════════════
+# ServerLens MCP Client Configuration
+# ═══════════════════════════════════════════
+#
+# Этот файл настраивает локальный MCP-клиент,
+# который подключается к удалённым серверам через SSH.
+#
+# Скопируйте в ~/.serverlens/config.yaml и отредактируйте.
+
+servers:
+  # Имя сервера — используется как префикс инструментов.
+  # Если сервер один, префикс не добавляется.
+  production:
+    ssh:
+      host: "1.2.3.4"
+      user: "alex"
+      port: 22
+      key: "~/.ssh/id_ed25519"        # путь к SSH-ключу
+      # Дополнительные SSH-опции (опционально):
+      options:
+        ConnectTimeout: "10"
+        ServerAliveInterval: "30"
+        ServerAliveCountMax: "3"
+
+    # Пути на удалённом сервере
+    remote:
+      php: "php"                                          # путь к PHP на сервере
+      serverlens_path: "/opt/serverlens/bin/serverlens"   # путь к ServerLens
+      config_path: "/etc/serverlens/config.yaml"          # путь к конфигу ServerLens
+
+  # Пример второго сервера (раскомментируй при необходимости):
+  # staging:
+  #   ssh:
+  #     host: "5.6.7.8"
+  #     user: "alex"
+  #     key: "~/.ssh/id_ed25519"
+  #   remote:
+  #     php: "php"
+  #     serverlens_path: "/opt/serverlens/bin/serverlens"
+  #     config_path: "/etc/serverlens/config.yaml"

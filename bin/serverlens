@@ -1,0 +1,149 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/../vendor/autoload.php';
+
+use ServerLens\Application;
+use ServerLens\Auth\TokenAuth;
+
+$command = $argv[1] ?? 'serve';
+$configPath = null;
+$transportOverride = null;
+$tokenArg = null;
+
+for ($i = 2; $i < $argc; $i++) {
+    if ($argv[$i] === '--config' && isset($argv[$i + 1])) {
+        $configPath = $argv[$i + 1];
+        $i++;
+    } elseif ($argv[$i] === '--stdio') {
+        $transportOverride = 'stdio';
+    } elseif ($argv[$i] === '--token' && isset($argv[$i + 1])) {
+        $tokenArg = $argv[$i + 1];
+        $i++;
+    }
+}
+
+$defaultPaths = [
+    '/etc/serverlens/config.yaml',
+    __DIR__ . '/../config.yaml',
+    __DIR__ . '/../config.example.yaml',
+];
+
+if ($configPath === null) {
+    foreach ($defaultPaths as $path) {
+        if (file_exists($path)) {
+            $configPath = $path;
+            break;
+        }
+    }
+}
+
+switch ($command) {
+    case 'serve':
+        if ($configPath === null) {
+            fwrite(STDERR, "Error: No config file found. Use --config <path>\n");
+            exit(1);
+        }
+
+        if ($transportOverride !== null) {
+            $yaml = \Symfony\Component\Yaml\Yaml::parseFile($configPath);
+            $yaml['server']['transport'] = $transportOverride;
+            $tmpConfig = tempnam(sys_get_temp_dir(), 'sl_');
+            file_put_contents($tmpConfig, \Symfony\Component\Yaml\Yaml::dump($yaml, 10));
+            $configPath = $tmpConfig;
+        }
+
+        try {
+            $app = new Application($configPath);
+            $app->run();
+        } catch (\Throwable $e) {
+            fwrite(STDERR, "Fatal: {$e->getMessage()}\n");
+            exit(1);
+        } finally {
+            if (isset($tmpConfig) && file_exists($tmpConfig)) {
+                unlink($tmpConfig);
+            }
+        }
+        break;
+
+    case 'token':
+        $subcommand = $argv[2] ?? 'generate';
+        handleTokenCommand($subcommand);
+        break;
+
+    case 'validate-config':
+        if ($configPath === null) {
+            fwrite(STDERR, "Error: No config file found. Use --config <path>\n");
+            exit(1);
+        }
+        try {
+            \ServerLens\Config::load($configPath);
+            echo "Configuration is valid: {$configPath}\n";
+        } catch (\Throwable $e) {
+            fwrite(STDERR, "Configuration error: {$e->getMessage()}\n");
+            exit(1);
+        }
+        break;
+
+    default:
+        printUsage();
+        exit(1);
+}
+
+function handleTokenCommand(string $subcommand): void
+{
+    switch ($subcommand) {
+        case 'generate':
+            $token = TokenAuth::generateToken();
+            $hash = TokenAuth::hashToken($token);
+            $created = date('Y-m-d');
+            $expires = date('Y-m-d', strtotime('+90 days'));
+
+            echo "=== New ServerLens Token ===\n";
+            echo "Token:   {$token}\n";
+            echo "Created: {$created}\n";
+            echo "Expires: {$expires}\n";
+            echo "\nAdd this to your config.yaml under auth.tokens:\n";
+            echo "  - hash: \"{$hash}\"\n";
+            echo "    created: \"{$created}\"\n";
+            echo "    expires: \"{$expires}\"\n";
+            echo "\nIMPORTANT: Save the token — it cannot be recovered!\n";
+            break;
+
+        case 'hash':
+            global $argc, $argv;
+            $inputToken = $argv[3] ?? null;
+            if ($inputToken === null) {
+                fwrite(STDERR, "Usage: serverlens token hash <token>\n");
+                exit(1);
+            }
+            $hash = TokenAuth::hashToken($inputToken);
+            echo "{$hash}\n";
+            break;
+
+        default:
+            fwrite(STDERR, "Unknown token command: {$subcommand}\n");
+            fwrite(STDERR, "Available: generate, hash\n");
+            exit(1);
+    }
+}
+
+function printUsage(): void
+{
+    echo <<<USAGE
+ServerLens — Secure Read-Only Server Diagnostics MCP Server
+
+Usage:
+  serverlens serve [--config <path>] [--stdio]    Start the MCP server
+  serverlens token generate                        Generate a new auth token
+  serverlens token hash <token>                    Hash a token for config
+  serverlens validate-config [--config <path>]     Validate config file
+
+Options:
+  --config <path>   Path to config.yaml
+  --stdio           Force stdio transport (for SSH piping)
+
+USAGE;
+}

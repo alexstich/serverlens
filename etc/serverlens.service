@@ -1,0 +1,35 @@
+[Unit]
+Description=ServerLens MCP Server
+After=network.target postgresql.service
+Documentation=https://gitlab.rucode.org/devtools/sauron
+
+[Service]
+Type=simple
+User=serverlens
+Group=serverlens
+ExecStart=/usr/bin/php /opt/serverlens/bin/serverlens serve --config /etc/serverlens/config.yaml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+
+# Environment
+EnvironmentFile=-/etc/serverlens/env
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/
+ReadWritePaths=/var/log/serverlens
+PrivateTmp=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target
