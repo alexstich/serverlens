@@ -1,0 +1,81 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/../vendor/autoload.php';
+
+use ServerLensMcp\Config;
+use ServerLensMcp\McpProxy;
+
+$configPath = null;
+
+for ($i = 1; $i < $argc; $i++) {
+    if ($argv[$i] === '--config' && isset($argv[$i + 1])) {
+        $configPath = $argv[$i + 1];
+        $i++;
+    } elseif ($argv[$i] === '--help' || $argv[$i] === '-h') {
+        printUsage();
+        exit(0);
+    }
+}
+
+$defaultPaths = [
+    getenv('HOME') . '/.serverlens/config.yaml',
+    __DIR__ . '/../config.yaml',
+    __DIR__ . '/../config.example.yaml',
+];
+
+if ($configPath === null) {
+    foreach ($defaultPaths as $path) {
+        if (file_exists($path)) {
+            $configPath = $path;
+            break;
+        }
+    }
+}
+
+if ($configPath === null) {
+    fwrite(STDERR, "Error: config not found. Use --config <path>\n");
+    fwrite(STDERR, "Searched: " . implode(', ', $defaultPaths) . "\n");
+    exit(1);
+}
+
+fwrite(STDERR, "[MCP] Config: {$configPath}\n");
+
+try {
+    $config = Config::load($configPath);
+    $proxy = new McpProxy($config);
+    $proxy->run();
+} catch (\Throwable $e) {
+    fwrite(STDERR, "Fatal: {$e->getMessage()}\n");
+    exit(1);
+}
+
+function printUsage(): void
+{
+    fwrite(STDERR, <<<USAGE
+ServerLens MCP Proxy — local MCP server for Cursor
+
+Connects to remote ServerLens instances via SSH and exposes
+their tools through the MCP protocol (stdio transport).
+
+Usage:
+  serverlens-mcp [--config <path>]
+
+Options:
+  --config <path>   Path to config.yaml (default: ~/.serverlens/config.yaml)
+  --help, -h        Show this help
+
+Cursor configuration (~/.cursor/mcp.json):
+  {
+    "mcpServers": {
+      "serverlens": {
+        "command": "php",
+        "args": ["/path/to/mcp-client/bin/serverlens-mcp", "--config", "~/.serverlens/config.yaml"]
+      }
+    }
+  }
+
+USAGE);
+}

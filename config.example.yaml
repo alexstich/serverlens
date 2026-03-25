@@ -1,0 +1,102 @@
+# ═══════════════════════════════════════════
+# ServerLens Configuration
+# ═══════════════════════════════════════════
+
+server:
+  host: "127.0.0.1"
+  port: 9600
+  transport: "sse"          # "sse" или "stdio"
+
+auth:
+  tokens:
+    - hash: "$argon2id$v=19$m=65536,t=4,p=1$CHANGE_ME"
+      created: "2026-03-25"
+      expires: "2026-06-25"
+  max_failed_attempts: 5
+  lockout_minutes: 15
+
+rate_limiting:
+  requests_per_minute: 60
+  max_concurrent: 5
+
+audit:
+  enabled: true
+  path: "/var/log/serverlens/audit.log"
+  log_params: false
+  retention_days: 90
+
+logs:
+  sources:
+    - name: "nginx_access"
+      path: "/var/log/nginx/access.log"
+      format: "nginx_combined"
+      max_lines: 5000
+
+    - name: "nginx_error"
+      path: "/var/log/nginx/error.log"
+      format: "plain"
+      max_lines: 2000
+
+    - name: "app_api"
+      path: "/var/log/app/api.log"
+      format: "json"
+      max_lines: 3000
+
+    - name: "postgresql"
+      path: "/var/log/postgresql/postgresql-16-main.log"
+      format: "postgres"
+      max_lines: 2000
+
+configs:
+  sources:
+    - name: "nginx_main"
+      path: "/etc/nginx/nginx.conf"
+      redact: []
+
+    - name: "nginx_sites"
+      path: "/etc/nginx/sites-enabled/"
+      type: "directory"
+      redact: []
+
+    - name: "postgres_main"
+      path: "/etc/postgresql/16/main/postgresql.conf"
+      redact:
+        - "password"
+        - "ssl_key_file"
+        - "ssl_cert_file"
+
+    - name: "postgres_hba"
+      path: "/etc/postgresql/16/main/pg_hba.conf"
+      redact: []
+
+databases:
+  connections:
+    - name: "app_prod"
+      host: "localhost"
+      port: 5432
+      database: "app_production"
+      user: "serverlens_readonly"
+      password_env: "SL_DB_APP_PASS"
+      tables:
+        - name: "users"
+          allowed_fields: ["id", "email", "created_at", "is_active"]
+          denied_fields: ["password_hash", "api_key", "reset_token"]
+          max_rows: 500
+          allowed_filters: ["id", "email", "is_active", "created_at"]
+          allowed_order_by: ["id", "created_at"]
+
+        - name: "api_requests"
+          allowed_fields: ["id", "endpoint", "method", "status_code", "response_time_ms", "created_at"]
+          denied_fields: ["request_body", "response_body", "ip_address"]
+          max_rows: 2000
+          allowed_filters: ["endpoint", "method", "status_code", "created_at"]
+          allowed_order_by: ["id", "created_at", "response_time_ms"]
+
+system:
+  enabled: true
+  allowed_services:
+    - "nginx"
+    - "postgresql"
+    - "rabbitmq-server"
+  allowed_docker_stacks:
+    - "app"
