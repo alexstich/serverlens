@@ -14,31 +14,54 @@
 
 ## Установка
 
-### Вариант A — Автоматическая (рекомендуется)
+### Вариант A — Интерактивный установщик (рекомендуется)
 
 ```bash
-git clone git@gitlab.rucode.org:devtools/sauron.git /opt/serverlens-src
-cd /opt/serverlens-src
+git clone git@gitlab.rucode.org:devtools/sauron.git ~/serverlens-src
+cd ~/serverlens-src
 sudo bash scripts/install.sh
 ```
 
-Скрипт сам:
+> Клонируем в домашнюю директорию — `/opt` принадлежит root. Скрипт сам скопирует файлы в `/opt/serverlens`.
+
+Установщик выполняет всё за один проход:
+- Проверяет PHP (версия >= 8.1, расширения)
 - Создаёт системного пользователя `serverlens`
-- Копирует файлы в `/opt/serverlens`
-- Запускает `composer install`
+- Копирует файлы в `/opt/serverlens`, запускает `composer install`
 - Создаёт директории `/etc/serverlens`, `/var/log/serverlens`
+- **Запускает интерактивный мастер настройки:**
+  - Сканирует установленные сервисы (nginx, PostgreSQL, Redis, PHP-FPM, Docker, RabbitMQ...)
+  - Обнаруживает лог-файлы и конфиги — вы выбираете нужные
+  - Настраивает подключение к PostgreSQL (выбор БД, таблиц, автоопределение чувствительных колонок, создание read-only пользователя)
+  - Генерирует готовый `/etc/serverlens/config.yaml`
 - Устанавливает systemd-сервис
+
+Для пропуска визарда (автоматизация, CI):
+
+```bash
+sudo bash scripts/install.sh --no-wizard
+```
 
 ### Вариант B — Ручная
 
 ```bash
-git clone git@gitlab.rucode.org:devtools/sauron.git /opt/serverlens-src
+git clone git@gitlab.rucode.org:devtools/sauron.git ~/serverlens-src
 sudo mkdir -p /opt/serverlens /etc/serverlens /var/log/serverlens
-sudo cp -r /opt/serverlens-src/src/ /opt/serverlens-src/bin/ /opt/serverlens-src/composer.json /opt/serverlens/
+sudo cp -r ~/serverlens-src/src/ ~/serverlens-src/bin/ ~/serverlens-src/composer.json /opt/serverlens/
 cd /opt/serverlens && sudo composer install --no-dev --optimize-autoloader
 sudo chmod +x /opt/serverlens/bin/serverlens
-sudo cp /opt/serverlens-src/config.example.yaml /etc/serverlens/config.yaml
+sudo cp ~/serverlens-src/config.example.yaml /etc/serverlens/config.yaml
 ```
+
+### Отдельная настройка PostgreSQL
+
+Для повторной настройки БД (добавить базу, пересоздать пользователя):
+
+```bash
+sudo bash scripts/setup_db.sh
+```
+
+Скрипт подключится к PostgreSQL, покажет доступные базы и таблицы, создаст read-only пользователя и обновит секцию `databases` в config.yaml.
 
 ### Когда нужен systemd?
 
@@ -210,6 +233,16 @@ databases:
 ```
 
 **Создание read-only пользователя PostgreSQL:**
+
+Проще всего — через интерактивный скрипт:
+
+```bash
+sudo bash scripts/setup_db.sh
+```
+
+Скрипт сам: подключится к PostgreSQL, покажет базы и таблицы, создаст пользователя и обновит config.yaml.
+
+Вручную:
 
 ```sql
 CREATE USER serverlens_readonly WITH PASSWORD 'надёжный_пароль';

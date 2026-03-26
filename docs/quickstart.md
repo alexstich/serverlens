@@ -3,8 +3,8 @@
 Этот документ описывает **пошаговую** установку системы целиком: от сервера до работающего MCP в Cursor.
 
 ```
-Шаг 1–4: НА УДАЛЁННОМ СЕРВЕРЕ
-Шаг 5–7: НА ТВОЕЙ МАШИНЕ (разработчика)
+Шаг 1–3: НА УДАЛЁННОМ СЕРВЕРЕ
+Шаг 4–6: НА ТВОЕЙ МАШИНЕ (разработчика)
 ```
 
 ---
@@ -16,82 +16,76 @@
 ```bash
 ssh alex@1.2.3.4
 
-git clone git@gitlab.rucode.org:devtools/sauron.git /opt/serverlens-src
-cd /opt/serverlens-src
+git clone git@gitlab.rucode.org:devtools/sauron.git ~/serverlens-src
+cd ~/serverlens-src
 ```
+
+> `/opt` принадлежит root, поэтому клонируем в домашнюю директорию. Скрипт установки сам скопирует нужные файлы в `/opt/serverlens`.
 
 ---
 
-## Шаг 2. Установить ServerLens на сервере
+## Шаг 2. Установить и настроить ServerLens
 
-**Вариант A — автоматически (рекомендуется):**
+**Вариант A — интерактивный установщик (рекомендуется):**
 
 ```bash
 sudo bash scripts/install.sh
 ```
 
-Скрипт сам создаст пользователя `serverlens`, скопирует файлы в `/opt/serverlens`, установит зависимости через Composer и настроит systemd.
+Установщик сделает всё за один проход:
+1. Проверит PHP (версию и расширения)
+2. Создаст системного пользователя `serverlens` и директории
+3. Установит зависимости (Composer)
+4. **Запустит мастер настройки:**
+   - Просканирует установленные сервисы (nginx, PostgreSQL, Redis, PHP-FPM, Docker...)
+   - Покажет найденные лог-файлы и конфиги — вы выберете нужные
+   - Предложит настроить подключение к PostgreSQL — выбрать БД, таблицы, колонки
+   - Автоматически определит чувствительные колонки (пароли, токены) и скроет их
+   - Создаст read-only пользователя PostgreSQL
+   - **Сгенерирует готовый `config.yaml`**
+5. Установит systemd-сервис
 
-**Вариант B — вручную:**
+> После установки конфиг почти не нужно редактировать вручную — визард покрывает все основные настройки.
+
+**Вариант A без визарда** (для автоматизации / CI):
+
+```bash
+sudo bash scripts/install.sh --no-wizard
+```
+
+Установит всё, но скопирует `config.example.yaml` без интерактива. Конфиг нужно будет заполнить вручную.
+
+**Вариант B — полностью вручную:**
 
 ```bash
 sudo mkdir -p /opt/serverlens /etc/serverlens /var/log/serverlens
 sudo cp -r src/ bin/ composer.json /opt/serverlens/
 cd /opt/serverlens && sudo composer install --no-dev --optimize-autoloader
 sudo chmod +x /opt/serverlens/bin/serverlens
-sudo cp /opt/serverlens-src/config.example.yaml /etc/serverlens/config.yaml
+sudo cp ~/serverlens-src/config.example.yaml /etc/serverlens/config.yaml
+sudo nano /etc/serverlens/config.yaml   # заполнить вручную
 ```
 
----
-
-## Шаг 3. Настроить конфигурацию ServerLens
-
-Отредактировать `/etc/serverlens/config.yaml` — указать свои логи, конфиги и базы данных:
+**Отдельная настройка PostgreSQL** (можно запустить позже повторно):
 
 ```bash
-sudo nano /etc/serverlens/config.yaml
+sudo bash scripts/setup_db.sh
 ```
 
-**Обязательно настроить:**
+Скрипт подключится к PostgreSQL, покажет базы/таблицы/колонки, создаст read-only пользователя и обновит секцию `databases` в `config.yaml`.
 
-1. **Логи** — прописать пути к файлам логов, которые нужны:
-```yaml
-logs:
-  sources:
-    - name: "nginx_error"
-      path: "/var/log/nginx/error.log"
-      format: "plain"
-      max_lines: 2000
-```
+**Права на логи** — после установки нужно добавить пользователя `serverlens` в группы:
 
-2. **Конфиги** (если нужны):
-```yaml
-configs:
-  sources:
-    - name: "nginx_main"
-      path: "/etc/nginx/nginx.conf"
-      redact: []
-```
-
-3. **Базы данных** (если нужны) — сначала создать read-only пользователя PostgreSQL:
-```bash
-sudo -u postgres psql -f /opt/serverlens-src/scripts/setup_db_users.sql
-```
-Затем прописать подключение в конфиге и создать файл с паролем:
-```bash
-echo "SL_DB_APP_PASS=надёжный_пароль" | sudo tee /etc/serverlens/env
-sudo chmod 640 /etc/serverlens/env
-```
-
-4. **Права на логи** — пользователь `serverlens` должен читать логи:
 ```bash
 sudo usermod -aG adm serverlens        # для /var/log/nginx/
 sudo usermod -aG postgres serverlens   # для /var/log/postgresql/
 ```
 
+> Установщик подскажет нужные команды в финальном выводе.
+
 ---
 
-## Шаг 4. Проверить, что ServerLens работает на сервере
+## Шаг 3. Проверить, что ServerLens работает на сервере
 
 ```bash
 # Проверить конфиг:
@@ -109,7 +103,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 
 ---
 
-## Шаг 5. Установить MCP-клиент на своей машине
+## Шаг 4. Установить MCP-клиент на своей машине
 
 Теперь переходим **на свой компьютер** (машина разработчика):
 
@@ -121,7 +115,7 @@ composer install
 
 ---
 
-## Шаг 6. Настроить SSH-подключение
+## Шаг 5. Настроить SSH-подключение
 
 Создать конфигурацию MCP-клиента:
 
@@ -154,7 +148,7 @@ ssh -i ~/.ssh/id_ed25519 alex@1.2.3.4 "php /opt/serverlens/bin/serverlens valida
 
 ---
 
-## Шаг 7. Подключить к Cursor
+## Шаг 6. Подключить к Cursor
 
 Добавить в `~/.cursor/mcp.json` (создать файл, если его нет):
 
