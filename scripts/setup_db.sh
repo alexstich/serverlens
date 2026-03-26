@@ -138,11 +138,11 @@ select_databases() {
         IFS=',' read -ra nums <<< "$sel"
         for n in "${nums[@]}"; do
             n=$(( ${n// /} - 1 ))
-            (( n >= 0 && n < ${#db_list[@]} )) && SELECTED_DBS+=("${db_list[$n]}")
+            if (( n >= 0 && n < ${#db_list[@]} )); then SELECTED_DBS+=("${db_list[$n]}"); fi
         done
     fi
 
-    (( ${#SELECTED_DBS[@]} == 0 )) && fail "Ни одна БД не выбрана"
+    if (( ${#SELECTED_DBS[@]} == 0 )); then fail "Ни одна БД не выбрана"; fi
     ok "Выбрано: ${SELECTED_DBS[*]}"
 }
 
@@ -231,11 +231,11 @@ configure_tables() {
             IFS=',' read -ra tnums <<< "$tsel"
             for n in "${tnums[@]}"; do
                 n=$(( ${n// /} - 1 ))
-                (( n >= 0 && n < ${#table_list[@]} )) && selected_tables+=("${table_list[$n]}")
+                if (( n >= 0 && n < ${#table_list[@]} )); then selected_tables+=("${table_list[$n]}"); fi
             done
         fi
 
-        (( ${#selected_tables[@]} == 0 )) && continue
+        if (( ${#selected_tables[@]} == 0 )); then continue; fi
 
         for t in "${selected_tables[@]}"; do
             pg_exec_db "$dbname" "GRANT SELECT ON \"${t}\" TO \"${DB_USER}\";"
@@ -267,7 +267,7 @@ configure_tables() {
                 is_filterable_column "$col" && { filters+=("$col"); order_by+=("$col"); }
             done <<< "$columns"
 
-            (( ${#denied[@]} > 0 )) && echo -e "    ${RED}СКРЫТО  (авто):${NC} ${denied[*]}"
+            if (( ${#denied[@]} > 0 )); then echo -e "    ${RED}СКРЫТО  (авто):${NC} ${denied[*]}"; fi
             echo -e "    ${GREEN}ОТКРЫТО (авто):${NC} ${allowed[*]}"
             echo -e "    ${BLUE}ФИЛЬТРЫ (авто):${NC} ${filters[*]:-нет}"
 
