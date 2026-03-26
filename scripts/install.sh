@@ -140,7 +140,7 @@ discover_services() {
                 ;;
         esac
 
-        $found && FOUND_SERVICES+=("$svc")
+        if $found; then FOUND_SERVICES+=("$svc"); fi
     done
 }
 
@@ -245,7 +245,7 @@ wizard_logs() {
             IFS=',' read -ra nums <<< "$sel"
             for n in "${nums[@]}"; do
                 n=$(( ${n// /} - 1 ))
-                (( n >= 0 && n < ${#found_logs[@]} )) && append_log "${found_names[$n]}" "${found_logs[$n]}" "${found_formats[$n]}"
+                if (( n >= 0 && n < ${#found_logs[@]} )); then append_log "${found_names[$n]}" "${found_logs[$n]}" "${found_formats[$n]}"; fi
             done
         fi
     fi
@@ -325,7 +325,7 @@ wizard_configs() {
             IFS=',' read -ra nums <<< "$sel"
             for n in "${nums[@]}"; do
                 n=$(( ${n// /} - 1 ))
-                (( n >= 0 && n < ${#found_cfgs[@]} )) && append_config "${found_cfg_names[$n]}" "${found_cfgs[$n]}" "${found_cfg_redacts[$n]}"
+                if (( n >= 0 && n < ${#found_cfgs[@]} )); then append_config "${found_cfg_names[$n]}" "${found_cfgs[$n]}" "${found_cfg_redacts[$n]}"; fi
             done
         fi
     fi
@@ -479,7 +479,7 @@ phase_checks() {
     php_major=$(php -r 'echo PHP_MAJOR_VERSION;')
     php_minor=$(php -r 'echo PHP_MINOR_VERSION;')
 
-    (( php_major < 8 || (php_major == 8 && php_minor < 1) )) && fail "Требуется PHP 8.1+, найден ${php_major}.${php_minor}"
+    if (( php_major < 8 || (php_major == 8 && php_minor < 1) )); then fail "Требуется PHP 8.1+, найден ${php_major}.${php_minor}"; fi
     ok "PHP ${php_major}.${php_minor}"
 
     for ext in json mbstring; do
@@ -555,12 +555,12 @@ phase_wizard() {
             IFS=',' read -ra nums <<< "$sel"
             for n in "${nums[@]}"; do
                 n=$(( ${n// /} - 1 ))
-                (( n >= 0 && n < ${#FOUND_SERVICES[@]} )) && SELECTED_SERVICES+=("${FOUND_SERVICES[$n]}")
+                if (( n >= 0 && n < ${#FOUND_SERVICES[@]} )); then SELECTED_SERVICES+=("${FOUND_SERVICES[$n]}"); fi
             done
         fi
     fi
 
-    (( ${#SELECTED_SERVICES[@]} > 0 )) && ok "Выбрано: ${SELECTED_SERVICES[*]}"
+    if (( ${#SELECTED_SERVICES[@]} > 0 )); then ok "Выбрано: ${SELECTED_SERVICES[*]}"; fi
 
     wizard_logs
     wizard_configs
