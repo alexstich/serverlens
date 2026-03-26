@@ -633,13 +633,27 @@ phase_summary() {
     echo "      sudo -u ${SERVICE_USER} php ${INSTALL_DIR}/bin/serverlens serve --config ${CONFIG_DIR}/config.yaml --stdio"
     echo ""
 
+    local log_dirs_shown=()
     if (( ${#SELECTED_SERVICES[@]} > 0 )); then
         echo -e "  ${BOLD}Права на логи:${NC}"
         for svc in "${SELECTED_SERVICES[@]}"; do
+            local log_dir=""
             case "$svc" in
-                nginx|apache2)   echo "    sudo usermod -aG adm ${SERVICE_USER}" ;;
-                postgresql)      echo "    sudo usermod -aG postgres ${SERVICE_USER}" ;;
+                nginx)      log_dir="/var/log/nginx" ;;
+                apache2)    log_dir="/var/log/apache2"; [[ ! -d "$log_dir" ]] && log_dir="/var/log/httpd" ;;
+                postgresql) log_dir="/var/log/postgresql" ;;
+                redis)      log_dir="/var/log/redis" ;;
+                rabbitmq)   log_dir="/var/log/rabbitmq" ;;
             esac
+            if [[ -n "$log_dir" && -d "$log_dir" ]]; then
+                local grp
+                grp=$(stat -c '%G' "$log_dir" 2>/dev/null || stat -f '%Sg' "$log_dir" 2>/dev/null || echo "")
+                if [[ -n "$grp" && "$grp" != "root" ]]; then
+                    echo "    sudo usermod -aG ${grp} ${SERVICE_USER}   # ${log_dir}/"
+                else
+                    echo "    sudo setfacl -R -m u:${SERVICE_USER}:rX ${log_dir}/"
+                fi
+            fi
         done
         echo ""
     fi
