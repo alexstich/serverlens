@@ -178,7 +178,7 @@ final class McpProxy
             $this->toolDefinitions[] = [
                 'name' => $prefixedName,
                 'description' => $description,
-                'inputSchema' => $tool['inputSchema'],
+                'inputSchema' => self::fixSchema($tool['inputSchema'] ?? []),
             ];
         }
 
@@ -190,6 +190,27 @@ final class McpProxy
         foreach ($this->servers as $server) {
             $server->close();
         }
+    }
+
+    private static function fixSchema(array $schema): array
+    {
+        $objectKeys = ['properties', 'patternProperties', 'definitions', 'additionalProperties'];
+        foreach ($objectKeys as $key) {
+            if (array_key_exists($key, $schema) && $schema[$key] === []) {
+                $schema[$key] = new \stdClass();
+            }
+        }
+        if (isset($schema['properties']) && is_array($schema['properties'])) {
+            foreach ($schema['properties'] as $k => $v) {
+                if (is_array($v)) {
+                    $schema['properties'][$k] = self::fixSchema($v);
+                }
+            }
+        }
+        if (isset($schema['items']) && is_array($schema['items'])) {
+            $schema['items'] = self::fixSchema($schema['items']);
+        }
+        return $schema;
     }
 
     private function jsonRpc(int|string $id, mixed $result): array
