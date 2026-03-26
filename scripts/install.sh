@@ -483,10 +483,18 @@ phase_checks() {
     ok "PHP ${php_major}.${php_minor}"
 
     for ext in json mbstring; do
-        php -m 2>/dev/null | grep -qi "^${ext}$" && ok "ext-${ext}" || fail "Отсутствует расширение ${ext}"
+        if php -r "if(!extension_loaded('${ext}')) exit(1);" 2>/dev/null; then
+            ok "ext-${ext}"
+        else
+            fail "Отсутствует расширение ${ext}"
+        fi
     done
 
-    php -m 2>/dev/null | grep -qi "^pdo_pgsql$" && ok "ext-pdo_pgsql" || warn "ext-pdo_pgsql не найден (нужен только для модуля БД)"
+    if php -r "if(!extension_loaded('pdo_pgsql')) exit(1);" 2>/dev/null; then
+        ok "ext-pdo_pgsql"
+    else
+        warn "ext-pdo_pgsql не найден (нужен только для модуля БД)"
+    fi
 }
 
 phase_create_user() {
