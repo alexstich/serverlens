@@ -52,7 +52,7 @@ declare -A SVC_UNITS
 SVC_UNITS=(
     [nginx]="nginx"
     [apache2]="apache2 httpd"
-    [postgresql]="postgresql postgresql@*"
+    [postgresql]="postgresql"
     [mysql]="mysql mysqld mariadb"
     [redis]="redis-server redis"
     [php-fpm]=""
@@ -96,29 +96,50 @@ DOCKER_YAML=""
 # Обнаружение сервисов
 # ═══════════════════════════════════════════════════
 
+CACHED_UNITS=""
+
+cache_systemctl() {
+    CACHED_UNITS=$(systemctl list-units --type=service --all --no-pager --no-legend 2>/dev/null || true)
+}
+
 service_is_active() {
-    systemctl is-active "$1" &>/dev/null 2>&1
+    echo "$CACHED_UNITS" | grep -qE "^\s*${1}\.service\s.*\sactive\s" 2>/dev/null
+}
+
+service_exists() {
+    echo "$CACHED_UNITS" | grep -qF "${1}.service" 2>/dev/null
 }
 
 discover_services() {
+    cache_systemctl
+
     for svc in "${ALL_SERVICES[@]}"; do
         local found=false
-        if [[ "$svc" == "php-fpm" ]]; then
-            local unit
-            unit=$(systemctl list-units --type=service --all 2>/dev/null | grep -oP 'php[0-9.]+-fpm\.service' | head -1 || true)
-            if [[ -n "$unit" ]]; then
-                SVC_UNITS[php-fpm]="${unit%.service}"
-                found=true
-            fi
-        else
-            for unit in ${SVC_UNITS[$svc]}; do
-                if systemctl list-unit-files "${unit}.service" &>/dev/null 2>&1 ||
-                   systemctl is-active "${unit}" &>/dev/null 2>&1; then
+
+        case "$svc" in
+            php-fpm)
+                local unit
+                unit=$(echo "$CACHED_UNITS" | grep -oP 'php[0-9.]+-fpm(?=\.service)' | head -1 || true)
+                if [[ -n "$unit" ]]; then
+                    SVC_UNITS[php-fpm]="$unit"
                     found=true
-                    break
                 fi
-            done
-        fi
+                ;;
+            postgresql)
+                if echo "$CACHED_UNITS" | grep -qE 'postgresql' 2>/dev/null; then
+                    found=true
+                fi
+                ;;
+            *)
+                for unit in ${SVC_UNITS[$svc]}; do
+                    if service_exists "$unit"; then
+                        found=true
+                        break
+                    fi
+                done
+                ;;
+        esac
+
         $found && FOUND_SERVICES+=("$svc")
     done
 }
