@@ -1,38 +1,52 @@
 # ═══════════════════════════════════════════
-# ServerLens MCP Client Configuration
+# ServerLens MCP Client — Конфигурация
 # ═══════════════════════════════════════════
 #
-# Этот файл настраивает локальный MCP-клиент,
-# который подключается к удалённым серверам через SSH.
+# Этот файл описывает УДАЛЁННЫЕ серверы, на которых установлен ServerLens.
+# MCP-клиент (эта программа) работает на ТВОЕЙ машине и подключается
+# к серверам через SSH.
 #
-# Скопируйте в ~/.serverlens/config.yaml и отредактируйте.
+# Установка:
+#   cp config.example.yaml ~/.serverlens/config.yaml
+#   nano ~/.serverlens/config.yaml
 
 servers:
-  # Имя сервера — используется как префикс инструментов.
-  # Если сервер один, префикс не добавляется.
-  production:
+  # ─── Имя сервера ───
+  # Придумай любое: monitor, production, web1, staging...
+  # Это имя используется:
+  #   - в логах MCP-клиента
+  #   - как префикс инструментов, если серверов > 1
+  #     (например: monitor_logs_tail, staging_logs_tail)
+  #   - если сервер один, префикс НЕ добавляется
+  monitor:
+
+    # ─── SSH-подключение ───
+    # Данные для подключения к удалённому серверу (как в ssh rucode@1.2.3.4)
     ssh:
-      host: "1.2.3.4"
-      user: "alex"
+      host: "1.2.3.4"                # IP или hostname удалённого сервера
+      user: "rucode"                  # SSH-пользователь
       port: 22
-      key: "~/.ssh/id_ed25519"        # путь к SSH-ключу
+      key: "~/.ssh/id_ed25519"       # путь к SSH-ключу НА ТВОЕЙ МАШИНЕ
       # Дополнительные SSH-опции (опционально):
       options:
         ConnectTimeout: "10"
         ServerAliveInterval: "30"
         ServerAliveCountMax: "3"
 
-    # Пути на удалённом сервере
+    # ─── Пути на удалённом сервере ───
+    # Где находятся PHP и ServerLens на СЕРВЕРЕ (не на твоей машине!)
     remote:
-      php: "php"                                          # путь к PHP на сервере
-      serverlens_path: "/opt/serverlens/bin/serverlens"   # путь к ServerLens
-      config_path: "/etc/serverlens/config.yaml"          # путь к конфигу ServerLens
+      php: "php"                                          # обычно просто "php"
+      serverlens_path: "/opt/serverlens/bin/serverlens"   # куда установился ServerLens
+      config_path: "/etc/serverlens/config.yaml"          # конфиг ServerLens на сервере
 
-  # Пример второго сервера (раскомментируй при необходимости):
+  # ─── Пример второго сервера ───
+  # Раскомментируй и заполни, если нужен ещё один:
+  #
   # staging:
   #   ssh:
   #     host: "5.6.7.8"
-  #     user: "alex"
+  #     user: "rucode"
   #     key: "~/.ssh/id_ed25519"
   #   remote:
   #     php: "php"

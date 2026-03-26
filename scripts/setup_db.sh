@@ -166,9 +166,24 @@ create_readonly_user() {
             pg_exec "ALTER USER \"${DB_USER}\" WITH PASSWORD '${DB_PASS}';"
             ok "Пароль обновлён"
         else
-            echo -n "  Текущий пароль (для записи в env): "
-            read -rs DB_PASS
-            echo ""
+            # Пытаемся взять текущий пароль из env-файла
+            local env_file="${CONFIG_DIR}/env"
+            local existing_pass=""
+            if [[ -f "$env_file" ]]; then
+                existing_pass=$(grep "^SL_DB_PASS=" "$env_file" 2>/dev/null | cut -d'=' -f2- || true)
+            fi
+            if [[ -n "$existing_pass" ]]; then
+                DB_PASS="$existing_pass"
+                ok "Пароль взят из ${env_file}"
+            else
+                while true; do
+                    echo -n "  Текущий пароль (для записи в env): "
+                    read -rs DB_PASS
+                    echo ""
+                    if [[ -n "$DB_PASS" ]]; then break; fi
+                    warn "Пароль не может быть пустым! Введите пароль или нажмите Ctrl+C для отмены."
+                done
+            fi
         fi
         pg_exec "ALTER USER \"${DB_USER}\" SET default_transaction_read_only = on;"
         pg_exec "ALTER USER \"${DB_USER}\" SET statement_timeout = '30s';"

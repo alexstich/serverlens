@@ -340,6 +340,8 @@ php bin/serverlens validate-config [--config <path>]
 
 ## Права доступа
 
+### Файлы ServerLens
+
 ```bash
 # Конфигурация
 chown root:serverlens /etc/serverlens/config.yaml
@@ -352,8 +354,40 @@ chmod 640 /etc/serverlens/env
 # Аудит-лог
 chown serverlens:serverlens /var/log/serverlens/
 chmod 750 /var/log/serverlens/
-
-# Логи, к которым нужен доступ — добавить пользователя в нужные группы:
-usermod -aG adm serverlens       # для /var/log/nginx/
-usermod -aG postgres serverlens  # для /var/log/postgresql/
 ```
+
+### SSH-пользователь
+
+MCP-клиент подключается по SSH от имени обычного пользователя (например `rucode`). Этот пользователь **должен** быть в группе `serverlens`, чтобы читать конфиг и env-файл:
+
+```bash
+sudo usermod -aG serverlens rucode
+```
+
+### Доступ к логам
+
+SSH-пользователь также должен быть в группах, которым принадлежат лог-файлы.
+
+**Ubuntu / Debian** (логи обычно в группе `adm`):
+
+```bash
+sudo usermod -aG adm rucode            # /var/log/nginx/, /var/log/syslog
+sudo usermod -aG postgres rucode       # /var/log/postgresql/
+```
+
+**CentOS / RHEL / Alma / Rocky** (логи принадлежат группам сервисов):
+
+```bash
+sudo usermod -aG nginx rucode          # /var/log/nginx/
+sudo usermod -aG postgres rucode       # /var/log/postgresql/
+```
+
+**Определить нужную группу** для конкретного лог-файла:
+
+```bash
+stat -c '%G' /var/log/nginx/access.log
+# adm      — на Ubuntu
+# nginx    — на CentOS
+```
+
+> **Важно:** после `usermod` нужно перелогиниться (выйти и зайти заново по SSH), чтобы новые группы применились.
