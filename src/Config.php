@@ -21,6 +21,17 @@ final class Config
             throw new \RuntimeException("Config file not found: {$path}");
         }
 
+        $envCandidates = [
+            dirname($path) . '/env',
+            '/etc/serverlens/env',
+        ];
+        foreach ($envCandidates as $envPath) {
+            if (is_readable($envPath)) {
+                self::loadEnvFile($envPath);
+                break;
+            }
+        }
+
         $data = Yaml::parseFile($path);
         if (!is_array($data)) {
             throw new \RuntimeException("Invalid config format");
@@ -30,6 +41,28 @@ final class Config
         $config->validate();
 
         return $config;
+    }
+
+    private static function loadEnvFile(string $envPath): void
+    {
+        if (!is_readable($envPath)) {
+            return;
+        }
+
+        $lines = file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if ($lines === false) {
+            return;
+        }
+
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '' || $line[0] === '#') {
+                continue;
+            }
+            if (str_contains($line, '=')) {
+                putenv($line);
+            }
+        }
     }
 
     public function get(string $key, mixed $default = null): mixed

@@ -625,17 +625,23 @@ phase_summary() {
     echo -e "  Логи аудита:  ${CYAN}${LOG_DIR}/audit.log${NC}"
     echo ""
     echo -e "  ${BOLD}Проверка:${NC}"
-    echo "    sudo -u ${SERVICE_USER} php ${INSTALL_DIR}/bin/serverlens validate-config \\"
+    echo "    php ${INSTALL_DIR}/bin/serverlens validate-config \\"
     echo "      --config ${CONFIG_DIR}/config.yaml"
     echo ""
     echo -e "  ${BOLD}Быстрый тест:${NC}"
     echo "    echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1.0\"}}}' | \\"
-    echo "      sudo -u ${SERVICE_USER} php ${INSTALL_DIR}/bin/serverlens serve --config ${CONFIG_DIR}/config.yaml --stdio"
+    echo "      php ${INSTALL_DIR}/bin/serverlens serve --config ${CONFIG_DIR}/config.yaml --stdio"
     echo ""
 
-    local log_dirs_shown=()
+    # SSH-пользователь и группы
+    echo -e "  ${BOLD}Права SSH-пользователя:${NC}"
+    echo -e "  MCP-клиент подключается по SSH. SSH-пользователь должен быть в нужных группах."
+    echo -e "  Замените ${CYAN}ВАШUSER${NC} на имя SSH-пользователя (тот, под которым заходите на сервер):"
+    echo ""
+    echo "    sudo usermod -aG serverlens ВАШUSER   # доступ к конфигу ServerLens"
+
+    declare -A shown_groups=()
     if (( ${#SELECTED_SERVICES[@]} > 0 )); then
-        echo -e "  ${BOLD}Права на логи:${NC}"
         for svc in "${SELECTED_SERVICES[@]}"; do
             local log_dir=""
             case "$svc" in
@@ -648,15 +654,18 @@ phase_summary() {
             if [[ -n "$log_dir" && -d "$log_dir" ]]; then
                 local grp
                 grp=$(stat -c '%G' "$log_dir" 2>/dev/null || stat -f '%Sg' "$log_dir" 2>/dev/null || echo "")
-                if [[ -n "$grp" && "$grp" != "root" ]]; then
-                    echo "    sudo usermod -aG ${grp} ${SERVICE_USER}   # ${log_dir}/"
-                else
-                    echo "    sudo setfacl -R -m u:${SERVICE_USER}:rX ${log_dir}/"
+                if [[ -n "$grp" && "$grp" != "root" && -z "${shown_groups[$grp]:-}" ]]; then
+                    echo "    sudo usermod -aG ${grp} ВАШUSER           # ${log_dir}/"
+                    shown_groups[$grp]=1
+                elif [[ "$grp" == "root" ]]; then
+                    echo "    sudo setfacl -R -m u:ВАШUSER:rX ${log_dir}/"
                 fi
             fi
         done
-        echo ""
     fi
+    echo ""
+    echo -e "  ${YELLOW}⚠${NC} После usermod нужно перелогиниться (выйти и зайти по SSH заново)"
+    echo ""
 
     echo -e "  ${BOLD}Далее:${NC} настройте MCP-клиент на машине разработчика"
     echo -e "  См. docs/quickstart.md (шаги 4–6)"
