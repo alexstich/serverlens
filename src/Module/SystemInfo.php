@@ -183,7 +183,7 @@ final class SystemInfo implements ModuleInterface
             $result['postgresql_total'] = (int) trim($pgTotal);
         }
 
-        $rmqConns = $this->exec("rabbitmqctl list_connections 2>/dev/null | tail -n +2 | wc -l");
+        $rmqConns = $this->exec("ss -tn state established 'sport = :5672' 2>/dev/null | tail -n +2 | wc -l");
         if ($rmqConns !== null) {
             $result['rabbitmq_connections'] = (int) trim($rmqConns);
         }

@@ -90,12 +90,12 @@ final class LogReader implements ModuleInterface
     {
         $list = [];
         foreach ($this->sources as $name => $source) {
-            $exists = file_exists($source['path']);
+            $available = file_exists($source['path']) && is_readable($source['path']);
             $list[] = [
                 'name' => $name,
                 'format' => $source['format'],
                 'max_lines' => $source['max_lines'],
-                'available' => $exists,
+                'available' => $available,
             ];
         }
 
