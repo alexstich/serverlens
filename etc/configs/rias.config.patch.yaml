@@ -48,12 +48,12 @@ system:
     #   /var/www/html/runtime/logs/app.log
     # Проверь: find /var/www -path '*/runtime/logs/*.log' 2>/dev/null
     - name: "yii_app"
-      path: "/var/www/rias/runtime/logs/app.log"
+      path: "/var/www/rias-gkh.ru/runtime/logs/app.log"
       format: "plain"
       max_lines: 5000
 
-    - name: "yii_console"
-      path: "/var/www/rias/console/runtime/logs/app.log"
+    - name: "yii_gisgkh-analytics"
+      path: "/var/www/gisgkh-analytics/runtime/logs/app.log"
       format: "plain"
       max_lines: 5000
 

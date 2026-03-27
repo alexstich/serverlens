@@ -82,7 +82,7 @@ done
 # Наборы известных сервисов, логов, конфигов
 # ═══════════════════════════════════════════════════
 
-ALL_SERVICES=(nginx apache2 postgresql mysql redis php-fpm docker rabbitmq)
+ALL_SERVICES=(nginx apache2 postgresql mysql redis php-fpm docker rabbitmq fail2ban)
 
 declare -A SVC_UNITS
 SVC_UNITS=(
@@ -94,6 +94,7 @@ SVC_UNITS=(
     [php-fpm]=""
     [docker]="docker"
     [rabbitmq]="rabbitmq-server"
+    [fail2ban]="fail2ban"
 )
 
 declare -A SVC_LOGS
@@ -106,6 +107,7 @@ SVC_LOGS=(
     [php-fpm]=""
     [docker]=""
     [rabbitmq]="/var/log/rabbitmq:plain"
+    [fail2ban]="/var/log/fail2ban.log:plain"
 )
 
 declare -A SVC_CONFIGS
@@ -118,7 +120,10 @@ SVC_CONFIGS=(
     [php-fpm]=""
     [docker]="/etc/docker/daemon.json"
     [rabbitmq]="/etc/rabbitmq/rabbitmq.conf"
+    [fail2ban]=""
 )
+
+WORKER_PATTERNS="gischannel|asyncqueue|asyncdispatch|async-|massexport|queue-"
 
 FOUND_SERVICES=()
 SELECTED_SERVICES=()
@@ -146,6 +151,8 @@ service_exists() {
     echo "$CACHED_UNITS" | grep -qF "${1}.service" 2>/dev/null
 }
 
+FOUND_WORKERS=()
+
 discover_services() {
     cache_systemctl
 
@@ -154,10 +161,10 @@ discover_services() {
 
         case "$svc" in
             php-fpm)
-                local unit
-                unit=$(echo "$CACHED_UNITS" | grep -oP 'php[0-9.]+-fpm(?=\.service)' | head -1 || true)
-                if [[ -n "$unit" ]]; then
-                    SVC_UNITS[php-fpm]="$unit"
+                local units
+                units=$(echo "$CACHED_UNITS" | grep -oP 'php[0-9.]+-fpm(?=\.service)' || true)
+                if [[ -n "$units" ]]; then
+                    SVC_UNITS[php-fpm]="$units"
                     found=true
                 fi
                 ;;
@@ -178,6 +185,13 @@ discover_services() {
 
         if $found; then FOUND_SERVICES+=("$svc"); fi
     done
+
+    if [[ -n "$WORKER_PATTERNS" ]]; then
+        while IFS= read -r wunit; do
+            [[ -z "$wunit" ]] && continue
+            FOUND_WORKERS+=("$wunit")
+        done < <(echo "$CACHED_UNITS" | grep -oP "(?:${WORKER_PATTERNS})[a-zA-Z0-9@_.-]*(?=\.service)" | sort -u || true)
+    fi
 }
 
 discover_pg_version_paths() {
@@ -266,6 +280,24 @@ wizard_logs() {
             ((idx++))
         fi
     done
+
+    while IFS= read -r yiilog; do
+        [[ -z "$yiilog" ]] && continue
+        local yiidir
+        yiidir=$(dirname "$yiilog")
+        local appdir
+        appdir=$(echo "$yiilog" | sed -E 's|/runtime/logs/.*||')
+        local appname
+        appname=$(basename "$appdir")
+        local logbase
+        logbase=$(basename "$yiilog" .log)
+        local yiiname="yii_${appname}_${logbase}"
+        yiiname="${yiiname//[^a-zA-Z0-9_]/_}"
+        found_logs+=("$yiilog"); found_formats+=("plain"); found_names+=("$yiiname")
+        local sz; sz=$(du -sh "$yiilog" 2>/dev/null | cut -f1)
+        info "[${idx}] $yiilog (yii, ${sz})"
+        ((idx++))
+    done < <(find /var/www -path '*/runtime/logs/*.log' -readable 2>/dev/null | head -20 || true)
 
     if (( ${#found_logs[@]} == 0 )); then
         warn "Лог-файлы не обнаружены"
@@ -455,15 +487,50 @@ append_config() {
 wizard_system() {
     echo -e "\n${BOLD}  ── Системный мониторинг ──${NC}\n"
 
-    if ! ask_yn "Включить мониторинг системы (диск, память, сервисы)?" "y"; then
+    if ! ask_yn "Включить мониторинг системы (диск, память, сервисы, процессы)?" "y"; then
         return
     fi
 
     for svc in "${SELECTED_SERVICES[@]}"; do
-        local unit="${SVC_UNITS[$svc]%% *}"
-        [[ -z "$unit" ]] && continue
-        SYSTEM_SVC_YAML+="    - \"${unit}\"\n"
+        local units="${SVC_UNITS[$svc]}"
+        if [[ "$svc" == "php-fpm" ]]; then
+            for unit in $units; do
+                SYSTEM_SVC_YAML+="    - \"${unit}\"\n"
+            done
+        else
+            local unit="${units%% *}"
+            [[ -z "$unit" ]] && continue
+            SYSTEM_SVC_YAML+="    - \"${unit}\"\n"
+        fi
     done
+
+    if (( ${#FOUND_WORKERS[@]} > 0 )); then
+        echo ""
+        info "Найденные воркеры/очереди:"
+        local widx=1
+        for w in "${FOUND_WORKERS[@]}"; do
+            local wstatus
+            service_is_active "$w" && wstatus="${GREEN}active${NC}" || wstatus="${YELLOW}inactive/failed${NC}"
+            echo -e "  [${widx}] ${w} (${wstatus})"
+            ((widx++))
+        done
+        echo ""
+        if ask_yn "Добавить все воркеры в мониторинг?" "y"; then
+            for w in "${FOUND_WORKERS[@]}"; do
+                SYSTEM_SVC_YAML+="    - \"${w}\"\n"
+            done
+        else
+            local sel
+            sel=$(ask_input "Номера через запятую (например 1,3,5)")
+            IFS=',' read -ra nums <<< "$sel"
+            for n in "${nums[@]}"; do
+                n=$(( ${n// /} - 1 ))
+                if (( n >= 0 && n < ${#FOUND_WORKERS[@]} )); then
+                    SYSTEM_SVC_YAML+="    - \"${FOUND_WORKERS[$n]}\"\n"
+                fi
+            done
+        fi
+    fi
 
     if [[ " ${SELECTED_SERVICES[*]} " == *" docker "* ]]; then
         echo ""
