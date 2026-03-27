@@ -364,4 +364,71 @@
 
 Количество активных соединений (PostgreSQL, RabbitMQ, TCP).
 
+Для RabbitMQ считаются оба направления:
+- `rabbitmq_incoming` — входящие (локальный RabbitMQ обслуживает клиентов, `sport = :5672`)
+- `rabbitmq_outgoing` — исходящие (локальные воркеры подключены к удалённому RabbitMQ, `dport = :5672`)
+- `rabbitmq_connections` — сумма входящих и исходящих
+
 **Параметры:** нет
+
+**Пример ответа:**
+```json
+{
+  "postgresql_active": 3,
+  "postgresql_total": 15,
+  "rabbitmq_incoming": 0,
+  "rabbitmq_outgoing": 12,
+  "rabbitmq_connections": 12,
+  "tcp_established": 47
+}
+```
+
+---
+
+### system_processes
+
+Список процессов с сортировкой по CPU или памяти (аналог htop/top).
+
+**Параметры:**
+
+| Параметр | Тип | Обязательный | По умолчанию | Описание |
+|----------|-----|:---:|:---:|----------|
+| `sort_by` | string | нет | `cpu` | Сортировка: `cpu` или `memory` |
+| `limit` | integer | нет | 20 | Количество процессов (макс. 100) |
+| `user` | string | нет | — | Фильтр по имени пользователя ОС |
+| `filter` | string | нет | — | Фильтр по подстроке в имени команды (регистронезависимый) |
+
+**Примеры:**
+```json
+{"sort_by": "memory", "limit": 10}
+```
+
+```json
+{"filter": "php", "limit": 30}
+```
+
+```json
+{"user": "www-data", "sort_by": "cpu"}
+```
+
+**Пример ответа:**
+```json
+{
+  "sort_by": "cpu",
+  "total_shown": 3,
+  "filters": {},
+  "processes": [
+    {
+      "user": "www-data",
+      "pid": 12345,
+      "cpu": 45.2,
+      "mem": 8.1,
+      "vsz_kb": 524288,
+      "rss_kb": 131072,
+      "stat": "Sl",
+      "time": "12:34:56",
+      "command": "php /var/www/app/artisan queue:work"
+    }
+  ]
+}
+```
