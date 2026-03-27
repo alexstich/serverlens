@@ -200,29 +200,23 @@ create_readonly_user() {
 
     if [[ "$user_exists" == "1" ]]; then
         ok "Пользователь '${DB_USER}' уже существует"
+
+        local env_file="${CONFIG_DIR}/env"
+        local existing_pass=""
+        if [[ -f "$env_file" ]]; then
+            existing_pass=$(grep "^SL_DB_PASS=" "$env_file" 2>/dev/null | cut -d'=' -f2- || true)
+        fi
+
         if ask_yn "Обновить пароль?" "n"; then
             DB_PASS=$(openssl rand -base64 24 | tr -d '/+=')
             pg_exec "ALTER USER \"${DB_USER}\" WITH PASSWORD '$(escape_sql_password "$DB_PASS")';"
             ok "Пароль обновлён"
+        elif [[ -n "$existing_pass" ]]; then
+            DB_PASS="$existing_pass"
+            ok "Пароль взят из ${env_file}"
         else
-            # Пытаемся взять текущий пароль из env-файла
-            local env_file="${CONFIG_DIR}/env"
-            local existing_pass=""
-            if [[ -f "$env_file" ]]; then
-                existing_pass=$(grep "^SL_DB_PASS=" "$env_file" 2>/dev/null | cut -d'=' -f2- || true)
-            fi
-            if [[ -n "$existing_pass" ]]; then
-                DB_PASS="$existing_pass"
-                ok "Пароль взят из ${env_file}"
-            else
-                while true; do
-                    echo -n "  Текущий пароль (для записи в env): "
-                    read -rs DB_PASS
-                    echo ""
-                    if [[ -n "$DB_PASS" ]]; then break; fi
-                    warn "Пароль не может быть пустым! Введите пароль или нажмите Ctrl+C для отмены."
-                done
-            fi
+            warn "Пароль не найден в ${env_file}"
+            info "После завершения запишите его вручную: SL_DB_PASS=... в ${env_file}"
         fi
         pg_exec "ALTER USER \"${DB_USER}\" SET default_transaction_read_only = on;"
         pg_exec "ALTER USER \"${DB_USER}\" SET statement_timeout = '30s';"
@@ -303,9 +297,12 @@ configure_tables() {
         YAML_OUTPUT+="      password_env: \"SL_DB_PASS\"\n"
         YAML_OUTPUT+="      tables:\n"
 
-        for tname in "${selected_tables[@]}"; do
-            echo -e "\n    ${BOLD}Таблица: ${tname}${NC}"
+        echo ""
+        local max_rows; max_rows=$(ask_input "Max rows для всех таблиц" "500")
 
+        local total_denied=0
+
+        for tname in "${selected_tables[@]}"; do
             local columns
             columns=$(pg_exec_db "$dbname" "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='${tname}' ORDER BY ordinal_position;")
 
@@ -321,32 +318,15 @@ configure_tables() {
                 is_filterable_column "$col" && { filters+=("$col"); order_by+=("$col"); }
             done <<< "$columns"
 
-            if (( ${#denied[@]} > 0 )); then echo -e "    ${RED}СКРЫТО  (авто):${NC} ${denied[*]}"; fi
-            echo -e "    ${GREEN}ОТКРЫТО (авто):${NC} ${allowed[*]}"
-            echo -e "    ${BLUE}ФИЛЬТРЫ (авто):${NC} ${filters[*]:-нет}"
-
-            if ! ask_yn "Принять?" "y"; then
-                local extra; extra=$(ask_input "Дополнительно скрыть (через пробел, или пустое)" "")
-                if [[ -n "$extra" ]]; then
-                    for col in $extra; do
-                        denied+=("$col")
-                        allowed=("${allowed[@]/$col/}")
-                    done
-                fi
-                local extra_f; extra_f=$(ask_input "Добавить фильтры (через пробел, или пустое)" "")
-                for col in ${extra_f:-}; do filters+=("$col"); done
+            local denied_info=""
+            if (( ${#denied[@]} > 0 )); then
+                denied_info=" ${RED}скрыто: ${denied[*]}${NC}"
+                ((total_denied += ${#denied[@]})) || true
             fi
-
-            # Чистим пустые
-            local a_clean=() f_clean=() o_clean=()
-            for c in "${allowed[@]}"; do [[ -n "$c" ]] && a_clean+=("$c"); done
-            for c in "${filters[@]}"; do [[ -n "$c" ]] && f_clean+=("$c"); done
-            for c in "${order_by[@]}"; do [[ -n "$c" ]] && o_clean+=("$c"); done
-
-            local max_rows; max_rows=$(ask_input "Max rows" "500")
+            echo -e "    ${GREEN}✓${NC} ${tname} (${#allowed[@]} открыто, ${#denied[@]} скрыто)${denied_info}"
 
             YAML_OUTPUT+="        - name: \"${tname}\"\n"
-            YAML_OUTPUT+="          allowed_fields: [$(printf '"%s", ' "${a_clean[@]}" | sed 's/, $//')]"
+            YAML_OUTPUT+="          allowed_fields: [$(printf '"%s", ' "${allowed[@]}" | sed 's/, $//')]"
             YAML_OUTPUT+="\n"
             if (( ${#denied[@]} > 0 )); then
                 YAML_OUTPUT+="          denied_fields: [$(printf '"%s", ' "${denied[@]}" | sed 's/, $//')]"
@@ -355,21 +335,26 @@ configure_tables() {
             fi
             YAML_OUTPUT+="\n"
             YAML_OUTPUT+="          max_rows: ${max_rows}\n"
-            if (( ${#f_clean[@]} > 0 )); then
-                YAML_OUTPUT+="          allowed_filters: [$(printf '"%s", ' "${f_clean[@]}" | sed 's/, $//')]"
+            if (( ${#filters[@]} > 0 )); then
+                YAML_OUTPUT+="          allowed_filters: [$(printf '"%s", ' "${filters[@]}" | sed 's/, $//')]"
             else
                 YAML_OUTPUT+="          allowed_filters: []"
             fi
             YAML_OUTPUT+="\n"
-            if (( ${#o_clean[@]} > 0 )); then
-                YAML_OUTPUT+="          allowed_order_by: [$(printf '"%s", ' "${o_clean[@]}" | sed 's/, $//')]"
+            if (( ${#order_by[@]} > 0 )); then
+                YAML_OUTPUT+="          allowed_order_by: [$(printf '"%s", ' "${order_by[@]}" | sed 's/, $//')]"
             else
                 YAML_OUTPUT+="          allowed_order_by: []"
             fi
             YAML_OUTPUT+="\n\n"
-
-            ok "Таблица ${tname}: ${#a_clean[@]} открыто, ${#denied[@]} скрыто"
         done
+
+        echo ""
+        ok "БД ${dbname}: ${#selected_tables[@]} таблиц, ${total_denied} скрытых колонок"
+        if (( total_denied > 0 )); then
+            info "Скрытые колонки определены автоматически (password, token, secret и т.д.)"
+            info "Отредактируйте denied_fields в config.yaml при необходимости"
+        fi
     done
 }
 
@@ -436,11 +421,15 @@ print_result() {
     echo -e "${YAML_OUTPUT}${NC}"
 
     echo ""
-    if ask_yn "Записать пароль в ${CONFIG_DIR}/env?" "y"; then
-        save_env
+    if [[ -n "$DB_PASS" ]]; then
+        if ask_yn "Записать пароль в ${CONFIG_DIR}/env?" "y"; then
+            save_env
+        else
+            echo -e "\n  ${BOLD}Пароль:${NC} ${DB_PASS}"
+            echo -e "  Запишите его вручную в ${CONFIG_DIR}/env как SL_DB_PASS=${DB_PASS}"
+        fi
     else
-        echo -e "\n  ${BOLD}Пароль:${NC} ${DB_PASS}"
-        echo -e "  Запишите его вручную в ${CONFIG_DIR}/env как SL_DB_PASS=${DB_PASS}"
+        warn "Пароль не задан — запишите его вручную в ${CONFIG_DIR}/env как SL_DB_PASS=<пароль>"
     fi
 
     echo ""
