@@ -242,7 +242,7 @@ final class DbQuery implements ModuleInterface
             return $this->ok(json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
         } catch (\PDOException $e) {
             fwrite(STDERR, "[ServerLens] DB error: {$e->getMessage()}\n");
-            return $this->error("Database query failed");
+            return $this->error($this->formatDbError($e));
         }
     }
 
@@ -286,7 +286,7 @@ final class DbQuery implements ModuleInterface
             return $this->ok(json_encode($result, JSON_PRETTY_PRINT));
         } catch (\PDOException $e) {
             fwrite(STDERR, "[ServerLens] DB error: {$e->getMessage()}\n");
-            return $this->error("Database query failed");
+            return $this->error($this->formatDbError($e));
         }
     }
 
@@ -334,7 +334,7 @@ final class DbQuery implements ModuleInterface
             return $this->ok(json_encode($result, JSON_PRETTY_PRINT));
         } catch (\PDOException $e) {
             fwrite(STDERR, "[ServerLens] DB error: {$e->getMessage()}\n");
-            return $this->error("Database query failed");
+            return $this->error($this->formatDbError($e));
         }
     }
 
@@ -507,6 +507,13 @@ final class DbQuery implements ModuleInterface
         }
 
         $conn = $this->connections[$dbName];
+
+        if (empty($conn['password'])) {
+            throw new \PDOException(
+                "No password configured (check env file and password_env setting)"
+            );
+        }
+
         $pdo = new \PDO($conn['dsn'], $conn['user'], $conn['password'], [
             \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
             \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
@@ -526,6 +533,24 @@ final class DbQuery implements ModuleInterface
             throw new \InvalidArgumentException("Invalid identifier: {$name}");
         }
         return '"' . $name . '"';
+    }
+
+    private function formatDbError(\PDOException $e): string
+    {
+        $msg = $e->getMessage();
+        if (str_contains($msg, 'password authentication failed') || str_contains($msg, 'No password configured')) {
+            return "Database authentication failed (check password in env file)";
+        }
+        if (str_contains($msg, 'Connection refused') || str_contains($msg, 'could not connect')) {
+            return "Database connection refused (check host/port)";
+        }
+        if (str_contains($msg, 'does not exist')) {
+            return "Database or table does not exist";
+        }
+        if (str_contains($msg, 'permission denied')) {
+            return "Database permission denied (check GRANT SELECT)";
+        }
+        return "Database query failed";
     }
 
     private function ok(string $text): array
