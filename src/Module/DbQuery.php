@@ -135,10 +135,30 @@ final class DbQuery implements ModuleInterface
                     'max_rows' => $tConfig['max_rows'],
                 ];
             }
-            $result[] = [
+
+            $connStatus = 'untested';
+            $connError = null;
+            $hasPassword = !empty($conn['password']);
+            try {
+                $pdo = $this->getPdo($name);
+                $pdo->query('SELECT 1');
+                $connStatus = 'ok';
+            } catch (\PDOException $e) {
+                $connStatus = 'error';
+                $connError = $this->formatDbError($e);
+            }
+
+            $entry = [
                 'database' => $name,
+                'connection_status' => $connStatus,
+                'has_password' => $hasPassword,
                 'tables' => $tables,
             ];
+            if ($connError) {
+                $entry['connection_error'] = $connError;
+            }
+
+            $result[] = $entry;
         }
 
         return $this->ok(json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
