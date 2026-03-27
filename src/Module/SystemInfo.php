@@ -55,6 +55,28 @@ final class SystemInfo implements ModuleInterface
                 'type' => 'object',
                 'properties' => new \stdClass(),
             ]),
+            new Tool('system_processes', 'Get top processes by CPU or memory usage (like htop)', [
+                'type' => 'object',
+                'properties' => [
+                    'sort_by' => [
+                        'type' => 'string',
+                        'description' => 'Sort by "cpu" (default) or "memory"',
+                        'enum' => ['cpu', 'memory'],
+                    ],
+                    'limit' => [
+                        'type' => 'integer',
+                        'description' => 'Number of processes to return (default 20, max 100)',
+                    ],
+                    'user' => [
+                        'type' => 'string',
+                        'description' => 'Filter by OS user (optional)',
+                    ],
+                    'filter' => [
+                        'type' => 'string',
+                        'description' => 'Filter by command name substring (optional)',
+                    ],
+                ],
+            ]),
         ];
     }
 
@@ -69,6 +91,7 @@ final class SystemInfo implements ModuleInterface
             'system_services' => $this->services($arguments),
             'system_docker' => $this->docker($arguments),
             'system_connections' => $this->connections(),
+            'system_processes' => $this->processes($arguments),
             default => $this->error("Unknown tool: {$name}"),
         };
     }
@@ -183,10 +206,17 @@ final class SystemInfo implements ModuleInterface
             $result['postgresql_total'] = (int) trim($pgTotal);
         }
 
-        $rmqConns = $this->exec("ss -tn state established 'sport = :5672' 2>/dev/null | tail -n +2 | wc -l");
-        if ($rmqConns !== null) {
-            $result['rabbitmq_connections'] = (int) trim($rmqConns);
+        $rmqIncoming = $this->exec("ss -tn state established 'sport = :5672' 2>/dev/null | tail -n +2 | wc -l");
+        if ($rmqIncoming !== null) {
+            $result['rabbitmq_incoming'] = (int) trim($rmqIncoming);
         }
+
+        $rmqOutgoing = $this->exec("ss -tn state established 'dport = :5672' 2>/dev/null | tail -n +2 | wc -l");
+        if ($rmqOutgoing !== null) {
+            $result['rabbitmq_outgoing'] = (int) trim($rmqOutgoing);
+        }
+
+        $result['rabbitmq_connections'] = ($result['rabbitmq_incoming'] ?? 0) + ($result['rabbitmq_outgoing'] ?? 0);
 
         $established = $this->exec("ss -tun state established 2>/dev/null | wc -l");
         if ($established !== null) {
@@ -194,6 +224,75 @@ final class SystemInfo implements ModuleInterface
         }
 
         return $this->ok(json_encode($result, JSON_PRETTY_PRINT));
+    }
+
+    private function processes(array $args): array
+    {
+        $sortBy = $args['sort_by'] ?? 'cpu';
+        $limit = min(max((int) ($args['limit'] ?? 20), 1), 100);
+        $user = $args['user'] ?? null;
+        $filter = $args['filter'] ?? null;
+
+        $sortFlag = $sortBy === 'memory' ? '-%mem' : '-%cpu';
+
+        $cmd = "ps aux --sort={$sortFlag} 2>/dev/null";
+        $output = $this->exec($cmd);
+        if ($output === null || $output === '') {
+            return $this->error("Failed to execute ps command");
+        }
+
+        $lines = explode("\n", trim($output));
+        if (count($lines) < 2) {
+            return $this->ok("No processes found");
+        }
+
+        $header = preg_split('/\s+/', trim($lines[0]), 11);
+        $processes = [];
+
+        for ($i = 1, $count = count($lines); $i < $count; $i++) {
+            $parts = preg_split('/\s+/', trim($lines[$i]), 11);
+            if (count($parts) < 11) {
+                continue;
+            }
+
+            $procUser = $parts[0];
+            $command = $parts[10];
+
+            if ($user !== null && $procUser !== $user) {
+                continue;
+            }
+            if ($filter !== null && stripos($command, $filter) === false) {
+                continue;
+            }
+
+            $processes[] = [
+                'user' => $procUser,
+                'pid' => (int) $parts[1],
+                'cpu' => (float) $parts[2],
+                'mem' => (float) $parts[3],
+                'vsz_kb' => (int) $parts[4],
+                'rss_kb' => (int) $parts[5],
+                'stat' => $parts[7],
+                'time' => $parts[9],
+                'command' => $command,
+            ];
+
+            if (count($processes) >= $limit) {
+                break;
+            }
+        }
+
+        $result = [
+            'sort_by' => $sortBy,
+            'total_shown' => count($processes),
+            'filters' => array_filter([
+                'user' => $user,
+                'command' => $filter,
+            ]),
+            'processes' => $processes,
+        ];
+
+        return $this->ok(json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
     }
 
     private function getServiceStatus(string $service): array

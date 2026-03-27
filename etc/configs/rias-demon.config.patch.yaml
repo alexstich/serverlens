@@ -1,0 +1,108 @@
+# ═══════════════════════════════════════════════════════════════
+# Demon-сервер (45.90.245.106:22622) — изменения в config.yaml
+# Путь на сервере: /etc/serverlens/config.yaml
+#
+# Что нужно изменить:
+#   1. system.allowed_services — добавить воркеры и php8.2-fpm
+#   2. logs.sources — добавить логи gischannel/dispatch
+#   3. databases.connections — добавить доступ к БД (если нужно)
+# ═══════════════════════════════════════════════════════════════
+
+# ─── СЕКЦИЯ system ───
+# БЫЛО:
+#   allowed_services:
+#     - "nginx"
+#     - "php7.2-fpm"
+#     - "rabbitmq-server"
+#
+# СТАЛО:
+system:
+  enabled: true
+  allowed_services:
+    # Веб-сервер
+    - "nginx"
+    # PHP-FPM (актуальная версия)
+    - "php8.2-fpm"
+    # RabbitMQ (если есть на этом сервере)
+    - "rabbitmq-server"
+    # GIS-канал: воркеры синхронного шлюза
+    - "gischannel-worker"
+    - "gischannel-dispatcher"
+    - "gischannel-sync"
+    # Async queue воркеры
+    - "asyncqueue-worker"
+    # Queue listeners (PHP 8.2)
+    - "queue-listener"
+    - "queue-worker"
+    # Добавь сюда точные имена systemd-юнитов с сервера.
+    # Узнать все юниты:
+    #   systemctl list-units --type=service | grep -iE 'gis|queue|async|worker|php'
+  allowed_docker_stacks: []
+
+# ─── СЕКЦИЯ logs (ДОБАВИТЬ источники) ───
+# Добавить к существующим логам:
+logs:
+  sources:
+    # ... (существующие логи nginx и т.д.) ...
+
+    # GIS-канал
+    - name: "gischannel_worker"
+      path: "/var/log/gischannel/worker.log"        # уточни путь на сервере
+      format: "plain"
+      max_lines: 5000
+
+    - name: "gischannel_dispatcher"
+      path: "/var/log/gischannel/dispatcher.log"     # уточни путь на сервере
+      format: "plain"
+      max_lines: 5000
+
+    - name: "gischannel_sync"
+      path: "/var/log/gischannel/sync.log"           # уточни путь на сервере
+      format: "plain"
+      max_lines: 3000
+
+    # Queue/async воркеры
+    - name: "queue_worker"
+      path: "/var/log/queue-worker.log"              # уточни путь на сервере
+      format: "plain"
+      max_lines: 5000
+
+    # Узнать все файлы логов воркеров:
+    #   find /var/log -name '*gis*' -o -name '*queue*' -o -name '*worker*' 2>/dev/null
+    #   journalctl -u 'gischannel*' --no-pager -n 1
+    #   Если логи идут в journald, добавь их через syslog/plain формат
+
+# ─── СЕКЦИЯ databases (ДОБАВИТЬ если нужен доступ к БД) ───
+# Если на demon-сервере есть PostgreSQL с данными:
+databases:
+  connections:
+    - name: "demon_db"
+      host: "localhost"
+      port: 5432
+      database: "имя_базы"
+      user: "serverlens_readonly"
+      password_env: "SL_DB_DEMON_PASS"
+      tables:
+        - name: "нужная_таблица"
+          allowed_fields: ["id", "status", "created_at"]
+          denied_fields: []
+          max_rows: 500
+          allowed_filters: ["id", "status"]
+          allowed_order_by: ["id", "created_at"]
+
+# ─── КОМАНДЫ ДЛЯ ДИАГНОСТИКИ НА СЕРВЕРЕ ───
+#
+# Узнать все systemd-сервисы воркеров:
+#   systemctl list-units --type=service --state=active | grep -iE 'gis|queue|async|worker|channel|php'
+#   systemctl list-unit-files --type=service | grep -iE 'gis|queue|async|worker|channel'
+#
+# Узнать логи:
+#   find /var/log -name '*gis*' -o -name '*queue*' -o -name '*worker*' -o -name '*dispatch*' 2>/dev/null
+#   ls -la /var/log/gischannel/ 2>/dev/null
+#   journalctl --list-boots | head -1   # проверить journald
+#
+# Узнать исходящие RabbitMQ-соединения (к RIAS 87.249.36.116:5672):
+#   ss -tn state established 'dport = :5672'
+#
+# После изменения конфига:
+#   php /opt/serverlens/bin/serverlens validate-config --config /etc/serverlens/config.yaml
