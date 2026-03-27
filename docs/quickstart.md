@@ -235,17 +235,28 @@ ssh -i ~/.ssh/id_ed25519 rucode@1.2.3.4 "php /opt/serverlens/bin/serverlens vali
 
 ### На сервере
 
-Заходим на сервер, переходим в директорию с исходниками и запускаем скрипт обновления:
+Заходим на сервер, переходим в директорию с исходниками:
 
 ```bash
 ssh alex@1.2.3.4
 cd ~/serverlens-src
+```
 
+**Рекомендуемый способ** (git pull от обычного пользователя + обновление от root):
+
+```bash
+git pull                                # от обычного пользователя
+sudo bash scripts/update.sh --no-pull   # от root
+```
+
+**Если на сервере есть прямой доступ к Git-репозиторию**, можно в одну команду:
+
+```bash
 sudo bash scripts/update.sh
 ```
 
 Скрипт автоматически:
-1. Выполнит `git pull` для получения последних изменений
+1. Выполнит `git pull` (определит владельца репо и запустит от его имени)
 2. Скопирует обновлённые файлы (`src/`, `bin/`, `composer.json`) в `/opt/serverlens/`
 3. Обновит PHP-зависимости (`composer install`)
 4. Обновит systemd-сервис, если он изменился
@@ -259,10 +270,7 @@ sudo bash scripts/update.sh
 
 ```bash
 # Если сервис запущен (SSE-режим), перезапустить автоматически:
-sudo bash scripts/update.sh --restart
-
-# Если git pull уже сделан вручную:
-sudo bash scripts/update.sh --no-pull
+sudo bash scripts/update.sh --restart --no-pull
 ```
 
 > Для SSH+stdio режима перезапуск сервиса не нужен — MCP-клиент запускает ServerLens при каждом подключении, поэтому обновлённый код подхватится автоматически.

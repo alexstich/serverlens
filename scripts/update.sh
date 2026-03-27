@@ -61,31 +61,70 @@ pull_updates() {
     fi
 
     if [[ ! -d "${SCRIPT_DIR}/.git" ]]; then
-        fail "Директория ${SCRIPT_DIR} не является git-репозиторием"
+        warn "Директория ${SCRIPT_DIR} не является git-репозиторием, пропуск git pull"
+        return
     fi
 
     cd "$SCRIPT_DIR"
-    local before after
-    before=$(git rev-parse HEAD)
+
+    local repo_owner
+    repo_owner=$(stat -c '%U' "${SCRIPT_DIR}/.git" 2>/dev/null || stat -f '%Su' "${SCRIPT_DIR}/.git" 2>/dev/null || echo "")
+
+    local before
+    before=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 
     local branch
-    branch=$(git rev-parse --abbrev-ref HEAD)
+    branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
     info "Ветка: ${branch}"
 
-    git fetch origin
-    git pull origin "$branch" --ff-only || fail "Не удалось выполнить git pull (возможно, есть локальные изменения). Сделайте git stash или git reset вручную."
+    local pull_ok=false
 
-    after=$(git rev-parse HEAD)
+    if [[ -n "$repo_owner" && "$repo_owner" != "root" ]]; then
+        info "Репозиторий принадлежит пользователю '${repo_owner}', запускаю git pull от его имени"
+        if sudo -u "$repo_owner" git -C "$SCRIPT_DIR" fetch origin 2>/dev/null \
+           && sudo -u "$repo_owner" git -C "$SCRIPT_DIR" pull origin "$branch" --ff-only 2>/dev/null; then
+            pull_ok=true
+        fi
+    else
+        if git fetch origin 2>/dev/null && git pull origin "$branch" --ff-only 2>/dev/null; then
+            pull_ok=true
+        fi
+    fi
+
+    if ! $pull_ok; then
+        warn "git pull не удался (нет SSH-доступа к репозиторию с этого сервера)"
+        echo ""
+        info "Варианты обновления:"
+        echo -e "    ${CYAN}1)${NC} На своей машине: ${BOLD}git push${NC}, затем на сервере от обычного пользователя:"
+        echo -e "       ${CYAN}cd ~/serverlens-src && git pull${NC}"
+        echo -e "       ${CYAN}sudo bash scripts/update.sh --no-pull${NC}"
+        echo ""
+        echo -e "    ${CYAN}2)${NC} Со своей машины через rsync:"
+        echo -e "       ${CYAN}rsync -avz --exclude .git --exclude vendor ./ user@server:~/serverlens-src/${NC}"
+        echo -e "       Затем на сервере: ${CYAN}sudo bash scripts/update.sh --no-pull${NC}"
+        echo ""
+
+        local answer
+        read -rp "  Продолжить обновление из текущих файлов? [Y/n]: " answer
+        if [[ -n "$answer" && "${answer,,}" != "y" ]]; then
+            fail "Обновление отменено"
+        fi
+        ok "Продолжаю с текущими файлами (${before:0:8})"
+        return
+    fi
+
+    local after
+    after=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 
     if [[ "$before" == "$after" ]]; then
         ok "Уже актуальная версия (${before:0:8})"
     else
         local count
-        count=$(git rev-list "${before}..${after}" --count)
+        count=$(git rev-list "${before}..${after}" --count 2>/dev/null || echo "?")
         ok "Обновлено: ${before:0:8} → ${after:0:8} (${count} коммитов)"
         echo ""
         info "Изменения:"
-        git --no-pager log --oneline "${before}..${after}" | while IFS= read -r line; do
+        git --no-pager log --oneline "${before}..${after}" 2>/dev/null | while IFS= read -r line; do
             echo -e "    ${CYAN}${line}${NC}"
         done
     fi
