@@ -113,7 +113,12 @@ setup_connection() {
 
     if [[ "$(id -u)" -eq 0 ]] && sudo -u postgres psql -t -A -c "SELECT 1" &>/dev/null 2>&1; then
         PG_CMD="sudo -u postgres psql"
-        ok "Подключено через sudo -u postgres (peer auth)"
+        local detected_port
+        detected_port=$(sudo -u postgres psql -t -A -c "SHOW port" 2>/dev/null | tr -d '[:space:]')
+        if [[ -n "$detected_port" ]]; then
+            PG_PORT="$detected_port"
+        fi
+        ok "Подключено через sudo -u postgres (peer auth, порт ${PG_PORT})"
         return
     fi
 
