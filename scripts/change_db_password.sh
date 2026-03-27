@@ -1,13 +1,39 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
-# ═══════════════════════════════════════════════════
-# ServerLens — Смена пароля read-only пользователя PostgreSQL
+# ═══════════════════════════════════════════════════════════════════════
+# ServerLens — Смена пароля read-only пользователя PostgreSQL (change_db_password.sh)
 #
-# Запуск:  sudo bash scripts/change_db_password.sh
-#          sudo bash scripts/change_db_password.sh --user myuser
-#          sudo bash scripts/change_db_password.sh --generate
-# ═══════════════════════════════════════════════════
+# Описание:
+#   Безопасно меняет пароль пользователя PostgreSQL, используемого
+#   ServerLens для read-only доступа к базам данных. Выполняет:
+#     1. Подключение к PostgreSQL (peer auth через sudo -u postgres,
+#        или по паролю суперпользователя)
+#     2. Проверку существования указанного пользователя в pg_roles
+#     3. Генерацию нового пароля (--generate или при пустом вводе)
+#        либо ввод пароля вручную
+#     4. Изменение пароля в PostgreSQL (ALTER USER ... WITH PASSWORD)
+#     5. Обновление пароля в /etc/serverlens/env (переменная SL_DB_PASS)
+#
+# Запуск:
+#   sudo bash scripts/change_db_password.sh                — интерактивный режим
+#   sudo bash scripts/change_db_password.sh --user=myuser  — указать пользователя
+#   sudo bash scripts/change_db_password.sh --generate     — автогенерация пароля
+#   sudo bash scripts/change_db_password.sh --help         — справка
+#
+# Безопасность:
+#   - Требует root-прав для peer-подключения к PostgreSQL
+#   - Проверяет существование пользователя перед изменением пароля
+#   - Пароли экранируются перед использованием в SQL и sed
+#   - НЕ изменяет права доступа, таблицы или другие настройки пользователя
+#   - Env-файл получает права 640 (root:serverlens)
+#   - Перезапуск ServerLens не требуется — пароль читается при каждом подключении
+#
+# Что НЕ делает скрипт:
+#   - Не создаёт и не удаляет пользователей PostgreSQL
+#   - Не изменяет GRANT-права или настройки read-only
+#   - Не трогает config.yaml
+#   - Не перезапускает PostgreSQL или ServerLens
+# ═══════════════════════════════════════════════════════════════════════
+set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
@@ -33,6 +59,14 @@ done
 ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
 warn() { echo -e "  ${YELLOW}⚠${NC} $1"; }
 fail() { echo -e "  ${RED}✗${NC} $1"; exit 1; }
+
+escape_sql_password() {
+    printf '%s' "${1//\'/\'\'}"
+}
+
+escape_sed_replacement() {
+    printf '%s' "$1" | sed -e 's/[&\\/|]/\\&/g'
+}
 
 echo -e "\n${BOLD}  Смена пароля PostgreSQL: ${DB_USER}${NC}\n"
 
@@ -74,16 +108,17 @@ else
 fi
 
 # Меняем пароль в PostgreSQL
-$PG_CMD -c "ALTER USER \"${DB_USER}\" WITH PASSWORD '${NEW_PASS}';" &>/dev/null
+$PG_CMD -c "ALTER USER \"${DB_USER}\" WITH PASSWORD '$(escape_sql_password "$NEW_PASS")';" &>/dev/null
 ok "Пароль изменён в PostgreSQL"
 
 # Обновляем env-файл
 ENV_FILE="${CONFIG_DIR}/env"
 if [[ -f "$ENV_FILE" ]]; then
     if grep -q "^SL_DB_PASS=" "$ENV_FILE" 2>/dev/null; then
-        sed -i "s|^SL_DB_PASS=.*|SL_DB_PASS=${NEW_PASS}|" "$ENV_FILE"
+        escaped_pass=$(escape_sed_replacement "$NEW_PASS")
+        sed -i "s|^SL_DB_PASS=.*|SL_DB_PASS=${escaped_pass}|" "$ENV_FILE"
     else
-        echo "SL_DB_PASS=${NEW_PASS}" >> "$ENV_FILE"
+        printf 'SL_DB_PASS=%s\n' "$NEW_PASS" >> "$ENV_FILE"
     fi
     chmod 640 "$ENV_FILE" 2>/dev/null || true
     chown root:serverlens "$ENV_FILE" 2>/dev/null || true
