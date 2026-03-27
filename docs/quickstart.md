@@ -78,17 +78,23 @@ sudo bash scripts/setup_db.sh
 1. Читать конфиг ServerLens (`/etc/serverlens/config.yaml`)
 2. Читать лог-файлы, указанные в конфиге
 
-Для этого SSH-пользователя нужно добавить в группу `serverlens` и в группы, владеющие логами:
+Для этого SSH-пользователя нужно добавить в группу `serverlens` и в группы, владеющие логами.
+
+> **Установщик (`install.sh`) автоматически:**
+> - добавляет системного пользователя `serverlens` в группу `adm`
+> - исправляет права на PHP-FPM логи (`root:adm 640`)
+>
+> Но SSH-пользователя нужно добавить в группы **вручную** (установщик покажет нужные команды).
 
 **Ubuntu / Debian:**
 
 ```bash
 sudo usermod -aG serverlens rucode     # доступ к конфигу ServerLens
-sudo usermod -aG adm rucode            # для /var/log/nginx/, /var/log/syslog
-sudo usermod -aG postgres rucode       # для /var/log/postgresql/
+sudo usermod -aG adm rucode            # /var/log/ — стандартная группа Ubuntu/Debian
+sudo usermod -aG postgres rucode       # /var/log/postgresql/ (если нужен)
 ```
 
-> На Ubuntu/Debian логи в `/var/log/` обычно принадлежат группе `adm`.
+> На Ubuntu/Debian логи в `/var/log/` принадлежат группе `adm` — это nginx, syslog, auth.log, PHP-FPM и др.
 
 **CentOS / RHEL / Alma / Rocky:**
 
@@ -100,12 +106,30 @@ sudo usermod -aG postgres rucode       # для /var/log/postgresql/
 
 > На CentOS/RHEL логи nginx принадлежат группе `nginx`, а не `adm`.
 
+**PHP-FPM логи** — частая проблема:
+
+PHP-FPM пишет логи в `/var/log/php*-fpm.log`. На Ubuntu эти файлы по умолчанию принадлежат `root:root` с правами `600` — не читаемы никем, кроме root. Установщик автоматически исправляет это на `root:adm 640`, но после **ротации логов** (logrotate) права могут сброситься.
+
+Чтобы права сохранялись, проверьте конфиг logrotate:
+
+```bash
+# Посмотреть текущий конфиг:
+cat /etc/logrotate.d/php8.2-fpm
+
+# Должна быть строка (добавьте, если нет):
+create 0640 root adm
+```
+
 **Как проверить, какая группа нужна:**
 
 ```bash
 ls -la /var/log/nginx/
 # -rw-r----- 1 root adm 12345 Mar 25 10:00 access.log
 #                    ^^^ — вот эту группу нужно добавить
+
+ls -la /var/log/php8.2-fpm.log
+# -rw-r----- 1 root adm 54321 Mar 25 10:00 php8.2-fpm.log
+#                    ^^^ — должна быть adm, а не root
 ```
 
 > **Важно:** после `usermod` нужно **перелогиниться** (завершить SSH-сессию и зайти заново), чтобы новые группы применились. Или выполнить `newgrp serverlens` в текущей сессии.

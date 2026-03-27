@@ -302,6 +302,64 @@ append_log() {
     LOG_YAML+="    - name: \"$1\"\n      path: \"$2\"\n      format: \"$3\"\n      max_lines: 5000\n\n"
 }
 
+fix_log_permissions() {
+    echo -e "\n${BOLD}  ── Права на лог-файлы ──${NC}\n"
+
+    if ! getent group adm &>/dev/null; then
+        warn "Группа 'adm' не найдена (не Ubuntu/Debian?)"
+        info "Выставите права на логи вручную — см. docs/quickstart.md"
+        return
+    fi
+
+    local fixed=0
+
+    for f in /var/log/php*-fpm.log /var/log/php/*/fpm.log; do
+        [[ -f "$f" ]] || continue
+        local grp perms
+        grp=$(stat -c '%G' "$f" 2>/dev/null || echo "unknown")
+        perms=$(stat -c '%a' "$f" 2>/dev/null || echo "000")
+        if [[ "$grp" == "root" ]] && (( (8#$perms & 8#040) == 0 )); then
+            chgrp adm "$f" 2>/dev/null && chmod 640 "$f" 2>/dev/null && {
+                ok "$f → root:adm 640"
+                ((fixed++)) || true
+            }
+        fi
+    done
+
+    if [[ -d /var/log/rabbitmq ]]; then
+        local dir_grp
+        dir_grp=$(stat -c '%G' /var/log/rabbitmq 2>/dev/null || echo "unknown")
+        if [[ "$dir_grp" != "adm" ]]; then
+            chgrp adm /var/log/rabbitmq 2>/dev/null && chmod 750 /var/log/rabbitmq 2>/dev/null && {
+                ok "/var/log/rabbitmq/ → rabbitmq:adm 750"
+                ((fixed++)) || true
+            }
+        fi
+        for f in /var/log/rabbitmq/*.log*; do
+            [[ -f "$f" ]] || continue
+            local fgrp
+            fgrp=$(stat -c '%G' "$f" 2>/dev/null || echo "unknown")
+            if [[ "$fgrp" != "adm" ]]; then
+                chgrp adm "$f" 2>/dev/null && chmod 640 "$f" 2>/dev/null && {
+                    ok "$f → :adm 640"
+                    ((fixed++)) || true
+                }
+            fi
+        done
+    fi
+
+    if (( fixed > 0 )); then
+        info "Чтобы права сохранялись после ротации логов, проверьте:"
+        for lr in /etc/logrotate.d/php*-fpm; do
+            [[ -f "$lr" ]] && info "  $lr → добавьте 'create 0640 root adm'"
+        done
+        [[ -f /etc/logrotate.d/rabbitmq-server ]] && \
+            info "  /etc/logrotate.d/rabbitmq-server → добавьте 'create 0640 rabbitmq adm'"
+    else
+        ok "Права на лог-файлы в порядке"
+    fi
+}
+
 # ═══════════════════════════════════════════════════
 # Визард — конфиги
 # ═══════════════════════════════════════════════════
@@ -541,6 +599,11 @@ phase_create_user() {
     else
         ok "Пользователь '${SERVICE_USER}' уже существует"
     fi
+
+    if getent group adm &>/dev/null; then
+        usermod -aG adm "${SERVICE_USER}" 2>/dev/null || true
+        ok "'${SERVICE_USER}' добавлен в группу 'adm' (доступ к логам)"
+    fi
 }
 
 phase_directories() {
@@ -607,6 +670,7 @@ phase_wizard() {
     if (( ${#SELECTED_SERVICES[@]} > 0 )); then ok "Выбрано: ${SELECTED_SERVICES[*]}"; fi
 
     wizard_logs
+    fix_log_permissions
     wizard_configs
     wizard_system
     generate_config
@@ -676,27 +740,37 @@ phase_summary() {
     echo ""
     echo "    sudo usermod -aG serverlens ВАШUSER   # доступ к конфигу ServerLens"
 
+    if getent group adm &>/dev/null; then
+        echo "    sudo usermod -aG adm ВАШUSER            # /var/log/ (стандарт Ubuntu/Debian)"
+    fi
+
     declare -A shown_groups=()
     if (( ${#SELECTED_SERVICES[@]} > 0 )); then
         for svc in "${SELECTED_SERVICES[@]}"; do
-            local log_dir=""
+            local log_paths=()
             case "$svc" in
-                nginx)      log_dir="/var/log/nginx" ;;
-                apache2)    log_dir="/var/log/apache2"; [[ ! -d "$log_dir" ]] && log_dir="/var/log/httpd" ;;
-                postgresql) log_dir="/var/log/postgresql" ;;
-                redis)      log_dir="/var/log/redis" ;;
-                rabbitmq)   log_dir="/var/log/rabbitmq" ;;
+                nginx)      [[ -d "/var/log/nginx" ]] && log_paths+=("/var/log/nginx") ;;
+                apache2)    [[ -d "/var/log/apache2" ]] && log_paths+=("/var/log/apache2")
+                            [[ -d "/var/log/httpd" ]] && log_paths+=("/var/log/httpd") ;;
+                postgresql) [[ -d "/var/log/postgresql" ]] && log_paths+=("/var/log/postgresql") ;;
+                redis)      [[ -d "/var/log/redis" ]] && log_paths+=("/var/log/redis") ;;
+                rabbitmq)   [[ -d "/var/log/rabbitmq" ]] && log_paths+=("/var/log/rabbitmq") ;;
+                php-fpm)
+                    for f in /var/log/php*-fpm.log; do
+                        [[ -f "$f" ]] && log_paths+=("$f")
+                    done
+                    ;;
             esac
-            if [[ -n "$log_dir" && -d "$log_dir" ]]; then
+            for lpath in "${log_paths[@]}"; do
                 local grp
-                grp=$(stat -c '%G' "$log_dir" 2>/dev/null || stat -f '%Sg' "$log_dir" 2>/dev/null || echo "")
-                if [[ -n "$grp" && "$grp" != "root" && -z "${shown_groups[$grp]:-}" ]]; then
-                    echo "    sudo usermod -aG ${grp} ВАШUSER           # ${log_dir}/"
+                grp=$(stat -c '%G' "$lpath" 2>/dev/null || stat -f '%Sg' "$lpath" 2>/dev/null || echo "")
+                if [[ -n "$grp" && "$grp" != "root" && "$grp" != "adm" && -z "${shown_groups[$grp]:-}" ]]; then
+                    echo "    sudo usermod -aG ${grp} ВАШUSER           # ${lpath}"
                     shown_groups[$grp]=1
                 elif [[ "$grp" == "root" ]]; then
-                    echo "    sudo setfacl -R -m u:ВАШUSER:rX ${log_dir}/"
+                    echo "    # ${lpath} — принадлежит root, права исправлены установщиком"
                 fi
-            fi
+            done
         done
     fi
     echo ""
