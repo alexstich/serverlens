@@ -1,25 +1,66 @@
 # ═══════════════════════════════════════════════════════════════
-# RIAS-сервер (87.249.36.116) — изменения в config.yaml
-# Путь на сервере: /etc/serverlens/config.yaml
+# RIAS-сервер (87.249.36.116)
+# Правки для /etc/serverlens/config.yaml
 #
-# Что нужно изменить:
-#   1. databases — расширить allowed_filters для async_queue_request
-#   2. databases — добавить таблицы debt_subrequest, payment_document
+# Инструкция: замените соответствующие секции в config.yaml
 # ═══════════════════════════════════════════════════════════════
 
-# ─── СЕКЦИЯ databases ───
-# Изменить существующую таблицу async_queue_request:
-databases:
-  connections:
-    - name: "rias_prod"              # имя подключения (оставить текущее)
-      # host, port, database, user, password_env — оставить как есть
-      tables:
-        # БЫЛО:
-        #   - name: "async_queue_request"
-        #     allowed_filters: ["id", "org_id"]
-        #     allowed_order_by: ["id"]
-        #
-        # СТАЛО:
+
+# ─── СЕКЦИЯ system: ЗАМЕНИТЬ ЦЕЛИКОМ ───
+
+system:
+  enabled: true
+  allowed_services:
+    - "nginx"
+    - "php8.4-fpm"
+    - "rabbitmq-server"
+    - "postgresql"
+    - "gischannel"
+    - "asyncqueue"
+    - "asyncdispatch"
+    - "async-task-queue"
+    - "massexport"
+    - "fail2ban"
+  allowed_docker_stacks: []
+
+
+# ─── СЕКЦИЯ logs.sources: ДОБАВИТЬ к существующим ───
+
+    - name: "syslog"
+      path: "/var/log/syslog"
+      format: "plain"
+      max_lines: 3000
+
+    - name: "php84_fpm"
+      path: "/var/log/php8.4-fpm.log"
+      format: "plain"
+      max_lines: 2000
+
+    - name: "fail2ban"
+      path: "/var/log/fail2ban.log"
+      format: "plain"
+      max_lines: 3000
+
+    # Логи приложения Yii — укажи актуальные пути
+    # Типичные расположения:
+    #   /var/www/rias/runtime/logs/app.log
+    #   /var/www/rias/console/runtime/logs/app.log
+    #   /var/www/html/runtime/logs/app.log
+    # Проверь: find /var/www -path '*/runtime/logs/*.log' 2>/dev/null
+    - name: "yii_app"
+      path: "/var/www/rias/runtime/logs/app.log"
+      format: "plain"
+      max_lines: 5000
+
+    - name: "yii_console"
+      path: "/var/www/rias/console/runtime/logs/app.log"
+      format: "plain"
+      max_lines: 5000
+
+
+# ─── СЕКЦИЯ databases: ИЗМЕНИТЬ таблицу async_queue_request, ДОБАВИТЬ таблицы ───
+# Вставить в существующий список tables:
+
         - name: "async_queue_request"
           allowed_fields: ["id", "org_id", "state", "routine", "dt_state_changed", "dt_created", "priority", "attempt_count", "error_message"]
           denied_fields: ["request_body", "response_body"]
@@ -27,7 +68,6 @@ databases:
           allowed_filters: ["id", "org_id", "state", "routine", "dt_state_changed", "dt_created", "priority"]
           allowed_order_by: ["id", "dt_created", "dt_state_changed", "priority"]
 
-        # ДОБАВИТЬ таблицы:
         - name: "debt_subrequest"
           allowed_fields: ["id", "org_id", "sync_status", "draft", "dt_created", "dt_updated", "subrequest_type"]
           denied_fields: []
@@ -41,20 +81,3 @@ databases:
           max_rows: 500
           allowed_filters: ["id", "org_id", "sync_status", "draft", "dt_created", "doc_type", "status"]
           allowed_order_by: ["id", "dt_created", "dt_updated"]
-
-        # ... (остальные существующие таблицы оставить как есть) ...
-
-# ─── ЗАМЕТКИ ───
-#
-# Фильтрация по state в async_queue_request:
-#   Теперь можно делать запросы вида:
-#     {"database": "rias_prod", "table": "async_queue_request",
-#      "filters": {"state": {"eq": "locked"}}, "order_by": ["-dt_state_changed"]}
-#
-# Узнать имена полей таблицы (на сервере от имени serverlens_readonly):
-#   psql -U serverlens_readonly -d имя_базы -c '\d async_queue_request'
-#   psql -U serverlens_readonly -d имя_базы -c '\d debt_subrequest'
-#   psql -U serverlens_readonly -d имя_базы -c '\d payment_document'
-#
-# После изменения конфига:
-#   php /opt/serverlens/bin/serverlens validate-config --config /etc/serverlens/config.yaml
