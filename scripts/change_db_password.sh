@@ -78,7 +78,10 @@ elif command -v psql &>/dev/null; then
     echo -n "  Пароль суперпользователя postgres: "
     read -rs pg_pass; echo ""
     export PGPASSWORD="$pg_pass"
-    PG_CMD="psql -h localhost -U postgres"
+    echo -n "  Порт PostgreSQL [5432]: "
+    read -r pg_port
+    pg_port="${pg_port:-5432}"
+    PG_CMD="psql -h localhost -p ${pg_port} -U postgres"
     if ! $PG_CMD -t -A -c "SELECT 1" &>/dev/null 2>&1; then
         fail "Не удалось подключиться к PostgreSQL"
     fi
