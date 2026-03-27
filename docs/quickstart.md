@@ -81,55 +81,55 @@ sudo bash scripts/setup_db.sh
 Для этого SSH-пользователя нужно добавить в группу `serverlens` и в группы, владеющие логами.
 
 > **Установщик (`install.sh`) автоматически:**
-> - добавляет системного пользователя `serverlens` в группу `adm`
-> - исправляет права на PHP-FPM логи (`root:adm 640`)
+> - добавляет системного пользователя `serverlens` в группу `adm` (если она есть)
+> - исправляет права на PHP-FPM логи (добавляет group read)
+> - исправляет права на RabbitMQ логи (добавляет group read)
 >
 > Но SSH-пользователя нужно добавить в группы **вручную** (установщик покажет нужные команды).
 
-**Ubuntu / Debian:**
+Каждый сервис хранит логи с собственной группой-владельцем. SSH-пользователя нужно добавить в группу, которой принадлежат логи:
 
 ```bash
 sudo usermod -aG serverlens rucode     # доступ к конфигу ServerLens
-sudo usermod -aG adm rucode            # /var/log/ — стандартная группа Ubuntu/Debian
-sudo usermod -aG postgres rucode       # /var/log/postgresql/ (если нужен)
 ```
 
-> На Ubuntu/Debian логи в `/var/log/` принадлежат группе `adm` — это nginx, syslog, auth.log, PHP-FPM и др.
+Дальше — зависит от сервисов. Установщик определяет группы автоматически и покажет точные команды, но типичные:
 
-**CentOS / RHEL / Alma / Rocky:**
+| Сервис | Группа (Ubuntu) | Группа (CentOS/RHEL) | Команда |
+|--------|------------------|-----------------------|---------|
+| syslog, auth.log, nginx | `adm` | `nginx` / `root` | `sudo usermod -aG adm rucode` |
+| PHP-FPM | `adm` (после фикса) | `root` | `sudo usermod -aG adm rucode` |
+| PostgreSQL | `postgres` | `postgres` | `sudo usermod -aG postgres rucode` |
+| RabbitMQ | `rabbitmq` | `rabbitmq` | `sudo usermod -aG rabbitmq rucode` |
 
-```bash
-sudo usermod -aG serverlens rucode     # доступ к конфигу ServerLens
-sudo usermod -aG nginx rucode          # для /var/log/nginx/
-sudo usermod -aG postgres rucode       # для /var/log/postgresql/
-```
-
-> На CentOS/RHEL логи nginx принадлежат группе `nginx`, а не `adm`.
+> **Что такое `adm`?** Это стандартная системная группа Ubuntu/Debian для чтения логов. Создаётся при установке ОС. Большинство файлов в `/var/log/` принадлежат `root:adm`. Проверить: `getent group adm`
 
 **PHP-FPM логи** — частая проблема:
 
-PHP-FPM пишет логи в `/var/log/php*-fpm.log`. На Ubuntu эти файлы по умолчанию принадлежат `root:root` с правами `600` — не читаемы никем, кроме root. Установщик автоматически исправляет это на `root:adm 640`, но после **ротации логов** (logrotate) права могут сброситься.
+PHP-FPM пишет логи в `/var/log/php*-fpm.log`. На Ubuntu эти файлы по умолчанию принадлежат `root:root` с правами `600` — не читаемы никем, кроме root. Установщик автоматически меняет группу на `adm` и ставит `640`, но после **ротации логов** (logrotate) права могут сброситься.
 
 Чтобы права сохранялись, проверьте конфиг logrotate:
 
 ```bash
-# Посмотреть текущий конфиг:
 cat /etc/logrotate.d/php8.2-fpm
-
 # Должна быть строка (добавьте, если нет):
 create 0640 root adm
 ```
 
-**Как проверить, какая группа нужна:**
+**RabbitMQ логи:**
+
+Логи в `/var/log/rabbitmq/` принадлежат `rabbitmq:rabbitmq`. Установщик добавляет group read, но SSH-пользователь должен быть в группе `rabbitmq`.
+
+**Как проверить, какая группа нужна для любого лога:**
 
 ```bash
 ls -la /var/log/nginx/
 # -rw-r----- 1 root adm 12345 Mar 25 10:00 access.log
 #                    ^^^ — вот эту группу нужно добавить
 
-ls -la /var/log/php8.2-fpm.log
-# -rw-r----- 1 root adm 54321 Mar 25 10:00 php8.2-fpm.log
-#                    ^^^ — должна быть adm, а не root
+ls -la /var/log/rabbitmq/
+# drwxr-x--- 2 rabbitmq rabbitmq 4096 Mar 25 10:00 .
+#                       ^^^^^^^^ — нужна группа rabbitmq
 ```
 
 > **Важно:** после `usermod` нужно **перелогиниться** (завершить SSH-сессию и зайти заново), чтобы новые группы применились. Или выполнить `newgrp serverlens` в текущей сессии.

@@ -327,21 +327,21 @@ fix_log_permissions() {
     done
 
     if [[ -d /var/log/rabbitmq ]]; then
-        local dir_grp
-        dir_grp=$(stat -c '%G' /var/log/rabbitmq 2>/dev/null || echo "unknown")
-        if [[ "$dir_grp" != "adm" ]]; then
-            chgrp adm /var/log/rabbitmq 2>/dev/null && chmod 750 /var/log/rabbitmq 2>/dev/null && {
-                ok "/var/log/rabbitmq/ → rabbitmq:adm 750"
+        local dir_perms
+        dir_perms=$(stat -c '%a' /var/log/rabbitmq 2>/dev/null || echo "000")
+        if (( (8#$dir_perms & 8#050) == 0 )); then
+            chmod g+rx /var/log/rabbitmq 2>/dev/null && {
+                ok "/var/log/rabbitmq/ → добавлен group read+execute"
                 ((fixed++)) || true
             }
         fi
         for f in /var/log/rabbitmq/*.log*; do
             [[ -f "$f" ]] || continue
-            local fgrp
-            fgrp=$(stat -c '%G' "$f" 2>/dev/null || echo "unknown")
-            if [[ "$fgrp" != "adm" ]]; then
-                chgrp adm "$f" 2>/dev/null && chmod 640 "$f" 2>/dev/null && {
-                    ok "$f → :adm 640"
+            local fperms
+            fperms=$(stat -c '%a' "$f" 2>/dev/null || echo "000")
+            if (( (8#$fperms & 8#040) == 0 )); then
+                chmod g+r "$f" 2>/dev/null && {
+                    ok "$f → добавлен group read"
                     ((fixed++)) || true
                 }
             fi
@@ -354,7 +354,7 @@ fix_log_permissions() {
             [[ -f "$lr" ]] && info "  $lr → добавьте 'create 0640 root adm'"
         done
         [[ -f /etc/logrotate.d/rabbitmq-server ]] && \
-            info "  /etc/logrotate.d/rabbitmq-server → добавьте 'create 0640 rabbitmq adm'"
+            info "  /etc/logrotate.d/rabbitmq-server → добавьте 'create 0640 rabbitmq rabbitmq'"
     else
         ok "Права на лог-файлы в порядке"
     fi
