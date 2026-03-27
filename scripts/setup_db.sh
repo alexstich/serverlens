@@ -1,17 +1,48 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
-# ═══════════════════════════════════════════════════
-# ServerLens — Интерактивная настройка PostgreSQL
+# ═══════════════════════════════════════════════════════════════════════
+# ServerLens — Интерактивная настройка PostgreSQL (setup_db.sh)
 #
-# Запуск:  sudo bash scripts/setup_db.sh
+# Описание:
+#   Настраивает read-only доступ ServerLens к базам данных PostgreSQL.
+#   Скрипт выполняет:
+#     1. Подключение к PostgreSQL (peer auth или по паролю суперпользователя)
+#     2. Вывод списка баз данных с размерами и числом таблиц
+#     3. Создание read-only пользователя (по умолчанию serverlens_readonly):
+#        — default_transaction_read_only = on (запрет записи)
+#        — statement_timeout = 30s (защита от тяжёлых запросов)
+#     4. Для каждой выбранной БД:
+#        — GRANT CONNECT, USAGE ON SCHEMA public
+#        — Показ таблиц с автоматическим определением чувствительных колонок
+#        — GRANT SELECT только на выбранные таблицы
+#     5. Генерацию YAML-секции databases для config.yaml
+#     6. Запись пароля в /etc/serverlens/env (SL_DB_PASS=...)
+#     7. Обновление секции databases в config.yaml (с бэкапом)
+#
+# Запуск:
+#   sudo bash scripts/setup_db.sh
+#   (вызывается также из install.sh в рамках мастера настройки)
 #
 # Идемпотентен — безопасно запускать повторно:
-#   - CREATE USER проверяет pg_roles
+#   - CREATE USER проверяет pg_roles перед созданием
 #   - ALTER USER / GRANT идемпотентны в PostgreSQL
-#   - config.yaml обновляется через замену секции databases
-#   - env-файл обновляется через замену строки
-# ═══════════════════════════════════════════════════
+#   - config.yaml обновляется через замену секции databases (с бэкапом)
+#   - env-файл обновляется через замену строки SL_DB_PASS
+#
+# Безопасность:
+#   - Создаёт пользователя ТОЛЬКО с правами SELECT (read-only)
+#   - Пароли экранируются перед использованием в SQL и sed
+#   - При обновлении config.yaml создаёт резервную копию (.bak.YYYYMMDDHHMMSS)
+#   - Чувствительные колонки (password, token, secret и т.д.) скрываются автоматически
+#   - Env-файл получает права 640 (root:serverlens)
+#   - PGPASSWORD экспортируется только в текущий процесс
+#
+# Что НЕ делает скрипт:
+#   - Не удаляет базы данных, таблицы или существующих пользователей
+#   - Не изменяет данные в таблицах
+#   - Не меняет pg_hba.conf или postgresql.conf
+#   - Не перезапускает PostgreSQL
+# ═══════════════════════════════════════════════════════════════════════
+set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
@@ -43,6 +74,14 @@ ask_input() {
         read -rp "  $prompt: " answer
         echo "$answer"
     fi
+}
+
+escape_sql_password() {
+    printf '%s' "${1//\'/\'\'}"
+}
+
+escape_sed_replacement() {
+    printf '%s' "$1" | sed -e 's/[&\\/|]/\\&/g'
 }
 
 SENSITIVE_PATTERNS="password passwd pass_hash secret api_key apikey token reset_token remember_token private_key credit_card ssn pin_code otp mfa two_factor session_id auth_code refresh_token access_token"
@@ -163,7 +202,7 @@ create_readonly_user() {
         ok "Пользователь '${DB_USER}' уже существует"
         if ask_yn "Обновить пароль?" "n"; then
             DB_PASS=$(openssl rand -base64 24 | tr -d '/+=')
-            pg_exec "ALTER USER \"${DB_USER}\" WITH PASSWORD '${DB_PASS}';"
+            pg_exec "ALTER USER \"${DB_USER}\" WITH PASSWORD '$(escape_sql_password "$DB_PASS")';"
             ok "Пароль обновлён"
         else
             # Пытаемся взять текущий пароль из env-файла
@@ -198,7 +237,7 @@ create_readonly_user() {
             echo ""
         fi
 
-        pg_exec "CREATE USER \"${DB_USER}\" WITH PASSWORD '${DB_PASS}';"
+        pg_exec "CREATE USER \"${DB_USER}\" WITH PASSWORD '$(escape_sql_password "$DB_PASS")';"
         pg_exec "ALTER USER \"${DB_USER}\" SET default_transaction_read_only = on;"
         pg_exec "ALTER USER \"${DB_USER}\" SET statement_timeout = '30s';"
         ok "Пользователь '${DB_USER}' создан"
@@ -341,10 +380,11 @@ save_env() {
     mkdir -p "${CONFIG_DIR}"
 
     if [[ -f "$env_file" ]] && grep -q "^SL_DB_PASS=" "$env_file" 2>/dev/null; then
-        sed -i "s|^SL_DB_PASS=.*|SL_DB_PASS=${DB_PASS}|" "$env_file"
+        local escaped; escaped=$(escape_sed_replacement "$DB_PASS")
+        sed -i "s|^SL_DB_PASS=.*|SL_DB_PASS=${escaped}|" "$env_file"
         ok "Пароль обновлён в ${env_file}"
     else
-        echo "SL_DB_PASS=${DB_PASS}" >> "$env_file"
+        printf 'SL_DB_PASS=%s\n' "$DB_PASS" >> "$env_file"
         ok "Пароль записан в ${env_file}"
     fi
     chmod 640 "$env_file" 2>/dev/null || true
