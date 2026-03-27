@@ -113,20 +113,16 @@ ok "Пароль изменён в PostgreSQL"
 
 # Обновляем env-файл
 ENV_FILE="${CONFIG_DIR}/env"
-if [[ -f "$ENV_FILE" ]]; then
-    if grep -q "^SL_DB_PASS=" "$ENV_FILE" 2>/dev/null; then
-        escaped_pass=$(escape_sed_replacement "$NEW_PASS")
-        sed -i "s|^SL_DB_PASS=.*|SL_DB_PASS=${escaped_pass}|" "$ENV_FILE"
-    else
-        printf 'SL_DB_PASS=%s\n' "$NEW_PASS" >> "$ENV_FILE"
-    fi
-    chmod 640 "$ENV_FILE" 2>/dev/null || true
-    chown root:serverlens "$ENV_FILE" 2>/dev/null || true
-    ok "Обновлён ${ENV_FILE}"
+mkdir -p "${CONFIG_DIR}"
+if [[ -f "$ENV_FILE" ]] && grep -q "^SL_DB_PASS=" "$ENV_FILE" 2>/dev/null; then
+    escaped_pass=$(escape_sed_replacement "$NEW_PASS")
+    sed -i "s|^SL_DB_PASS=.*|SL_DB_PASS=${escaped_pass}|" "$ENV_FILE"
 else
-    warn "${ENV_FILE} не найден"
-    echo -e "  Запишите вручную: SL_DB_PASS=${NEW_PASS}"
+    printf 'SL_DB_PASS=%s\n' "$NEW_PASS" >> "$ENV_FILE"
 fi
+chmod 640 "$ENV_FILE" 2>/dev/null || true
+chown root:serverlens "$ENV_FILE" 2>/dev/null || true
+ok "Пароль записан в ${ENV_FILE}"
 
 echo ""
 ok "Готово. Перезапуск ServerLens не требуется — пароль читается при каждом подключении."

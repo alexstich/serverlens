@@ -422,12 +422,7 @@ print_result() {
 
     echo ""
     if [[ -n "$DB_PASS" ]]; then
-        if ask_yn "Записать пароль в ${CONFIG_DIR}/env?" "y"; then
-            save_env
-        else
-            echo -e "\n  ${BOLD}Пароль:${NC} ${DB_PASS}"
-            echo -e "  Запишите его вручную в ${CONFIG_DIR}/env как SL_DB_PASS=${DB_PASS}"
-        fi
+        save_env
     else
         warn "Пароль не задан — запишите его вручную в ${CONFIG_DIR}/env как SL_DB_PASS=<пароль>"
     fi
