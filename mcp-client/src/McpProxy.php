@@ -15,12 +15,17 @@ final class McpProxy
     /** @var array<array{name: string, description: string, inputSchema: array}> */
     private array $toolDefinitions = [];
 
+    /** @var array<string, array> */
+    private array $serverConfigs = [];
+
+    private bool $singleServer = false;
+
     public function __construct(Config $config)
     {
-        $serverConfigs = $config->getServers();
-        $singleServer = count($serverConfigs) === 1;
+        $this->serverConfigs = $config->getServers();
+        $this->singleServer = count($this->serverConfigs) === 1;
 
-        foreach ($serverConfigs as $name => $serverConfig) {
+        foreach ($this->serverConfigs as $name => $serverConfig) {
             fwrite(STDERR, "[MCP] Connecting to server '{$name}'...\n");
 
             $ssh = new SshConnection($name, $serverConfig);
@@ -37,7 +42,7 @@ final class McpProxy
             }
 
             $this->servers[$name] = $ssh;
-            $this->discoverTools($name, $ssh, $singleServer);
+            $this->discoverTools($name, $ssh, $this->singleServer);
         }
 
         $totalTools = count($this->toolDefinitions);
@@ -127,34 +132,75 @@ final class McpProxy
         $serverName = $reg['server'];
         $originalTool = $reg['tool'];
 
+        $needReconnect = false;
+
         if (!isset($this->servers[$serverName])) {
-            return $this->jsonRpc($id, [
-                'content' => [['type' => 'text', 'text' => "Server '{$serverName}' not connected"]],
-                'isError' => true,
-            ]);
+            $needReconnect = true;
+        } elseif (!$this->servers[$serverName]->isAlive()) {
+            fwrite(STDERR, "[MCP] Server '{$serverName}' connection lost\n");
+            $this->servers[$serverName]->close();
+            unset($this->servers[$serverName]);
+            $needReconnect = true;
+        }
+
+        if ($needReconnect) {
+            if (!$this->reconnectServer($serverName)) {
+                return $this->jsonRpc($id, [
+                    'content' => [['type' => 'text', 'text' => "Server '{$serverName}' not connected and reconnect failed"]],
+                    'isError' => true,
+                ]);
+            }
         }
 
         $server = $this->servers[$serverName];
-
-        if (!$server->isAlive()) {
-            fwrite(STDERR, "[MCP] Server '{$serverName}' connection lost, reconnecting...\n");
-            unset($this->servers[$serverName]);
-            return $this->jsonRpc($id, [
-                'content' => [['type' => 'text', 'text' => "Server '{$serverName}' connection lost"]],
-                'isError' => true,
-            ]);
-        }
-
         $response = $server->callTool($id, $originalTool, $arguments);
 
         if ($response === null) {
-            return $this->jsonRpc($id, [
-                'content' => [['type' => 'text', 'text' => "No response from server '{$serverName}'"]],
-                'isError' => true,
-            ]);
+            fwrite(STDERR, "[MCP] No response from '{$serverName}', attempting reconnect...\n");
+            $server->close();
+            unset($this->servers[$serverName]);
+
+            if ($this->reconnectServer($serverName)) {
+                $response = $this->servers[$serverName]->callTool($id, $originalTool, $arguments);
+            }
+
+            if ($response === null) {
+                return $this->jsonRpc($id, [
+                    'content' => [['type' => 'text', 'text' => "No response from server '{$serverName}' (reconnect attempted)"]],
+                    'isError' => true,
+                ]);
+            }
         }
 
         return $response;
+    }
+
+    private function reconnectServer(string $serverName): bool
+    {
+        if (!isset($this->serverConfigs[$serverName])) {
+            fwrite(STDERR, "[MCP] No config for server '{$serverName}', cannot reconnect\n");
+            return false;
+        }
+
+        fwrite(STDERR, "[MCP] Reconnecting to '{$serverName}'...\n");
+
+        $ssh = new SshConnection($serverName, $this->serverConfigs[$serverName]);
+
+        if (!$ssh->connect()) {
+            fwrite(STDERR, "[MCP] Reconnect FAILED: cannot connect to '{$serverName}'\n");
+            return false;
+        }
+
+        if (!$ssh->initialize()) {
+            fwrite(STDERR, "[MCP] Reconnect FAILED: cannot initialize '{$serverName}'\n");
+            $ssh->close();
+            return false;
+        }
+
+        $this->servers[$serverName] = $ssh;
+        fwrite(STDERR, "[MCP] Reconnected to '{$serverName}'\n");
+
+        return true;
     }
 
     private function discoverTools(string $serverName, SshConnection $ssh, bool $singleServer): void
