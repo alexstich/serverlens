@@ -62,22 +62,22 @@ system:
 # Вставить в существующий список tables:
 
         - name: "async_queue_request"
-          allowed_fields: ["id", "org_id", "state", "routine", "dt_state_changed", "dt_created", "priority", "attempt_count", "error_message"]
-          denied_fields: ["request_body", "response_body"]
+          allowed_fields: ["id", "kind", "org_id", "message_guid", "state", "routine", "completed_stage", "priority", "attempt", "wake_time", "dt_state_changed", "error", "exception_text"]
+          denied_fields: ["misc", "items_class"]
           max_rows: 1000
-          allowed_filters: ["id", "org_id", "state", "routine", "dt_state_changed", "dt_created", "priority"]
-          allowed_order_by: ["id", "dt_created", "dt_state_changed", "priority"]
+          allowed_filters: ["id", "org_id", "state", "routine", "kind", "dt_state_changed", "priority"]
+          allowed_order_by: ["id", "dt_state_changed", "priority"]
 
         - name: "debt_subrequest"
-          allowed_fields: ["id", "org_id", "sync_status", "draft", "dt_created", "dt_updated", "subrequest_type"]
+          allowed_fields: ["id", "created", "updated", "deleted", "draft", "organization_id", "organization_branch_id", "sender_id", "executor_id", "response_status", "sync_date", "sync_status", "sync_error", "sync_error_message", "modification_date", "request_guid", "organization_branch_sector_id"]
           denied_fields: []
           max_rows: 500
-          allowed_filters: ["id", "org_id", "sync_status", "draft", "dt_created", "subrequest_type"]
-          allowed_order_by: ["id", "dt_created", "dt_updated"]
+          allowed_filters: ["id", "organization_id", "sync_status", "draft", "created", "sender_id", "executor_id"]
+          allowed_order_by: ["id", "created", "updated"]
 
         - name: "payment_document"
-          allowed_fields: ["id", "org_id", "sync_status", "draft", "dt_created", "dt_updated", "doc_type", "status"]
+          allowed_fields: ["id", "created", "updated", "deleted", "account_id", "author_id", "sender_id", "number", "unique_number", "period_year", "period_month", "total_payable", "draft", "sync_date", "sync_status", "sync_error", "sync_error_message", "organization_id", "organization_branch_id", "organization_branch_sector_id"]
           denied_fields: []
           max_rows: 500
-          allowed_filters: ["id", "org_id", "sync_status", "draft", "dt_created", "doc_type", "status"]
-          allowed_order_by: ["id", "dt_created", "dt_updated"]
+          allowed_filters: ["id", "organization_id", "sync_status", "draft", "created", "account_id", "period_year", "period_month"]
+          allowed_order_by: ["id", "created", "updated"]

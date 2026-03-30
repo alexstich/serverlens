@@ -407,7 +407,8 @@ final class DbQuery implements ModuleInterface
         foreach ($orderBy as $ob) {
             $field = ltrim($ob, '-');
             if (!empty($allowedOrderBy) && !in_array($field, $allowedOrderBy, true)) {
-                return "Order by field not allowed: {$field}";
+                $allowed = implode(', ', $allowedOrderBy);
+                return "Order by field not allowed: {$field}. Allowed: [{$allowed}]";
             }
         }
 
@@ -420,7 +421,8 @@ final class DbQuery implements ModuleInterface
 
         foreach ($filters as $field => $conditions) {
             if (!empty($allowedFilters) && !in_array($field, $allowedFilters, true)) {
-                return "Filter on field not allowed: {$field}";
+                $allowed = implode(', ', $allowedFilters);
+                return "Filter on field not allowed: {$field}. Allowed: [{$allowed}]";
             }
 
             if (!is_array($conditions)) {
@@ -563,6 +565,12 @@ final class DbQuery implements ModuleInterface
         }
         if (str_contains($msg, 'Connection refused') || str_contains($msg, 'could not connect')) {
             return "Database connection refused (check host/port)";
+        }
+        if (str_contains($msg, 'column') && str_contains($msg, 'does not exist')) {
+            if (preg_match('/column "([^"]+)" does not exist/', $msg, $m)) {
+                return "Column does not exist: {$m[1]} (check allowed_fields in config)";
+            }
+            return "Column does not exist (check allowed_fields in config)";
         }
         if (str_contains($msg, 'does not exist')) {
             return "Database or table does not exist";

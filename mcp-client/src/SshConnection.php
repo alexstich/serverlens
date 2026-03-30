@@ -220,6 +220,8 @@ final class SshConnection
         $parts = ['ssh'];
         $parts[] = '-o BatchMode=yes';
         $parts[] = '-o StrictHostKeyChecking=accept-new';
+        $parts[] = '-o ServerAliveInterval=15';
+        $parts[] = '-o ServerAliveCountMax=3';
 
         foreach ($options as $optKey => $optVal) {
             if (!is_string($optKey) || is_int($optKey)) {
