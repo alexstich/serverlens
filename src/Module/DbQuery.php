@@ -166,12 +166,16 @@ final class DbQuery implements ModuleInterface
 
     private function describe(array $args): array
     {
-        $dbName = $args['database'] ?? '';
+        $requestedDb = $args['database'] ?? '';
+        $dbName = $this->resolveDbName($requestedDb);
+        if ($dbName === null) {
+            return $this->dbNotFoundError($requestedDb);
+        }
         $tableName = $args['table'] ?? '';
 
-        $tableConfig = $this->getTableConfig($dbName, $tableName);
+        $tableConfig = $this->connections[$dbName]['tables'][$tableName] ?? null;
         if ($tableConfig === null) {
-            return $this->error("Unknown database or table");
+            return $this->tableNotFoundError($dbName, $tableName);
         }
 
         $info = [
@@ -189,7 +193,11 @@ final class DbQuery implements ModuleInterface
 
     private function query(array $args): array
     {
-        $dbName = $args['database'] ?? '';
+        $requestedDb = $args['database'] ?? '';
+        $dbName = $this->resolveDbName($requestedDb);
+        if ($dbName === null) {
+            return $this->dbNotFoundError($requestedDb);
+        }
         $tableName = $args['table'] ?? '';
         $fields = $args['fields'] ?? null;
         $filters = $args['filters'] ?? [];
@@ -197,9 +205,9 @@ final class DbQuery implements ModuleInterface
         $limit = (int) ($args['limit'] ?? 100);
         $offset = (int) ($args['offset'] ?? 0);
 
-        $tableConfig = $this->getTableConfig($dbName, $tableName);
+        $tableConfig = $this->connections[$dbName]['tables'][$tableName] ?? null;
         if ($tableConfig === null) {
-            return $this->error("Unknown database or table");
+            return $this->tableNotFoundError($dbName, $tableName);
         }
 
         $allowedFields = $this->resolveAllowedFields($tableConfig);
@@ -268,13 +276,17 @@ final class DbQuery implements ModuleInterface
 
     private function count(array $args): array
     {
-        $dbName = $args['database'] ?? '';
+        $requestedDb = $args['database'] ?? '';
+        $dbName = $this->resolveDbName($requestedDb);
+        if ($dbName === null) {
+            return $this->dbNotFoundError($requestedDb);
+        }
         $tableName = $args['table'] ?? '';
         $filters = $args['filters'] ?? [];
 
-        $tableConfig = $this->getTableConfig($dbName, $tableName);
+        $tableConfig = $this->connections[$dbName]['tables'][$tableName] ?? null;
         if ($tableConfig === null) {
-            return $this->error("Unknown database or table");
+            return $this->tableNotFoundError($dbName, $tableName);
         }
 
         $validation = $this->validateFilters($filters, $tableConfig);
@@ -312,13 +324,17 @@ final class DbQuery implements ModuleInterface
 
     private function stats(array $args): array
     {
-        $dbName = $args['database'] ?? '';
+        $requestedDb = $args['database'] ?? '';
+        $dbName = $this->resolveDbName($requestedDb);
+        if ($dbName === null) {
+            return $this->dbNotFoundError($requestedDb);
+        }
         $tableName = $args['table'] ?? '';
         $field = $args['field'] ?? '';
 
-        $tableConfig = $this->getTableConfig($dbName, $tableName);
+        $tableConfig = $this->connections[$dbName]['tables'][$tableName] ?? null;
         if ($tableConfig === null) {
-            return $this->error("Unknown database or table");
+            return $this->tableNotFoundError($dbName, $tableName);
         }
 
         $allowedFields = $this->resolveAllowedFields($tableConfig);
@@ -358,13 +374,29 @@ final class DbQuery implements ModuleInterface
         }
     }
 
-    private function getTableConfig(string $dbName, string $tableName): ?array
+    private function resolveDbName(string $dbName): ?string
     {
-        if (!isset($this->connections[$dbName])) {
-            return null;
+        if ($dbName !== '' && isset($this->connections[$dbName])) {
+            return $dbName;
         }
 
-        return $this->connections[$dbName]['tables'][$tableName] ?? null;
+        if (count($this->connections) === 1) {
+            return array_key_first($this->connections);
+        }
+
+        return null;
+    }
+
+    private function dbNotFoundError(string $requested): array
+    {
+        $available = implode(', ', array_keys($this->connections));
+        return $this->error("Unknown database connection: '{$requested}'. Available: [{$available}]");
+    }
+
+    private function tableNotFoundError(string $dbName, string $tableName): array
+    {
+        $count = count($this->connections[$dbName]['tables']);
+        return $this->error("Unknown table: '{$tableName}' in database '{$dbName}'. Total tables: {$count}. Use db_list to see all.");
     }
 
     private function resolveAllowedFields(array $tableConfig): array
