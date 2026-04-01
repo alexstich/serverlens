@@ -13,11 +13,9 @@
 servers:
   # ─── Имя сервера ───
   # Придумай любое: monitor, production, web1, staging...
-  # Это имя используется:
-  #   - в логах MCP-клиента
-  #   - как префикс инструментов, если серверов > 1
-  #     (например: monitor_logs_tail, staging_logs_tail)
-  #   - если сервер один, префикс НЕ добавляется
+  # Имя сервера используется в вызовах serverlens_call:
+  #   { "server": "monitor", "tool": "logs_tail", ... }
+  # и в логах MCP-клиента.
   monitor:
 
     # ─── SSH-подключение ───
@@ -27,7 +25,9 @@ servers:
       user: "rucode"                  # SSH-пользователь
       port: 22
       key: "~/.ssh/id_ed25519"       # путь к SSH-ключу НА ТВОЕЙ МАШИНЕ
-      # Дополнительные SSH-опции (опционально):
+      # Дополнительные SSH-опции (опционально).
+      # Keepalive (ServerAliveInterval=15) уже встроен в MCP-клиент;
+      # блок options нужен только для своих значений или других опций.
       options:
         ConnectTimeout: "10"
         ServerAliveInterval: "30"

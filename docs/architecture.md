@@ -11,10 +11,12 @@
 │   ┌─────────────┐    stdio (JSON-RPC)    ┌──────────────────────────┐       │
 │   │   Cursor /   │◄────────────────────►│   ServerLens MCP Proxy    │       │
 │   │ Claude Desktop│                      │   (mcp-client/)           │       │
-│   │  (MCP-клиент)│                      │                            │       │
-│   └─────────────┘                       │  ┌──────────────────────┐ │       │
+│   │  (MCP-клиент)│                      │  только 2 tools:         │       │
+│   └─────────────┘                       │  serverlens_list,        │       │
+│                                          │  serverlens_call         │       │
+│                                          │  ┌──────────────────────┐ │       │
 │                                          │  │  SSH Connection       │ │       │
-│                                          │  │  Manager              │ │       │
+│                                          │  │  Manager (+ keepalive)│ │       │
 │                                          │  └──────────┬───────────┘ │       │
 │                                          └─────────────┼─────────────┘       │
 │                                                        │                     │
@@ -64,21 +66,26 @@
 
 **Протокол:** stdio (JSON-RPC 2.0) — Cursor запускает его как команду.
 
+**Два инструмента для Cursor (модель dispatch):** вместо экспорта десятков удалённых tools с префиксами (`production__logs_tail` и т.п.) прокси отдаёт Cursor только **`serverlens_list`** и **`serverlens_call`**. Реальные инструменты ServerLens вызываются через второй — с указанием сервера и имени tool.
+
+**«Матрёшка» (навигация):**
+- `serverlens_list()` — список настроенных серверов
+- `serverlens_list({ server: "rias" })` — список tools на этом сервере (как на удалённом `tools/list`)
+- `serverlens_call({ server: "rias", tool: "db_query", arguments: { ... } })` — выполнение инструмента на сервере
+
 **Функции:**
 - Читает локальную конфигурацию с SSH-параметрами
-- Устанавливает SSH-соединения к серверам
+- Устанавливает SSH-соединения к серверам (keepalive: `ServerAliveInterval=15`, `ServerAliveCountMax=3`)
 - Запускает ServerLens в stdio-режиме на каждом сервере
-- При нескольких серверах — добавляет префикс к именам инструментов
-- Транслирует запросы от Cursor к нужному серверу
-- Возвращает ответы обратно
+- При обрыве SSH — автоматическое переподключение и восстановление сессии с удалённым MCP
+- Транслирует вызовы `serverlens_call` в JSON-RPC `tools/call` на нужном сервере
+- Возвращает ответы обратно в Cursor
 
 **Жизненный цикл:**
-1. Cursor запускает `serverlens-mcp` → SSH → удалённый ServerLens
-2. Получает список инструментов от всех серверов
-3. Ожидает запросы от Cursor
-4. Для каждого `tools/call` — определяет сервер по имени инструмента
-5. Пересылает запрос через SSH
-6. Возвращает ответ Cursor
+1. Cursor запускает `serverlens-mcp` → устанавливаются SSH-сессии → на каждом сервере поднимается ServerLens (stdio)
+2. Cursor вызывает `serverlens_list()` — видит серверы; при необходимости `serverlens_list({ server })` — список tools на сервере
+3. Для действия — `serverlens_call({ server, tool, arguments })`; прокси маршрутизирует на нужный SSH-канал и передаёт `tools/call` удалённому ServerLens
+4. Ответ возвращается в Cursor; при падении SSH прокси переподключается и повторяет операцию при следующем вызове
 
 ### 2. ServerLens (серверная часть)
 
@@ -111,12 +118,16 @@ MCP-сервер, работающий на удалённом сервере.
 ```
 1. Cursor: "Покажи последние ошибки nginx"
    │
-2. Claude/AI определяет нужный инструмент:
-   │  tools/call → logs_search(source="nginx_error", query="error", lines=50)
+2. Claude/AI (через dispatch):
+   │  serverlens_call({
+   │    server: "production",
+   │    tool: "logs_search",
+   │    arguments: { source: "nginx_error", query: "error", lines: 50 }
+   │  })
    │
 3. MCP Proxy (локально):
-   │  ├── Определяет сервер по имени инструмента
-   │  ├── Пересылает JSON-RPC через SSH
+   │  ├── Маршрутизирует на SSH-сессию "production"
+   │  ├── Пересылает tools/call → logs_search(...) через JSON-RPC по SSH
    │  │
 4. ServerLens (на сервере):
    │  ├── Rate Limiter: OK
@@ -136,10 +147,17 @@ MCP-сервер, работающий на удалённом сервере.
 1. Cursor: "Сколько пользователей зарегистрировалось за март?"
    │
 2. AI:
-   │  tools/call → db_count(database="app_prod", table="users",
-   │                         filters={"created_at": {"gte": "2026-03-01", "lt": "2026-04-01"}})
+   │  serverlens_call({
+   │    server: "production",
+   │    tool: "db_count",
+   │    arguments: {
+   │      database: "app_prod",
+   │      table: "users",
+   │      filters: { created_at: { gte: "2026-03-01", lt: "2026-04-01" } }
+   │    }
+   │  })
    │
-3. MCP Proxy → SSH →
+3. MCP Proxy → tools/call на сервере → SSH →
    │
 4. ServerLens:
    │  ├── Проверяет "app_prod" в whitelist: OK

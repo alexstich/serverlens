@@ -187,9 +187,9 @@ cp ~/serverlens/mcp-client/config.example.yaml ~/.serverlens/config.yaml
 
 ```yaml
 servers:
-  # ↓ Это произвольное имя. Придумай сам: monitor, production, web1 — что угодно.
-  #   Если серверов несколько, имя станет префиксом инструментов: monitor_logs_tail, web1_logs_tail
-  #   Если сервер один — префикс не добавляется.
+  # ↓ Произвольное имя сервера в конфиге (monitor, production, web1…).
+  #   В Cursor через MCP видны только serverlens_list и serverlens_call;
+  #   в serverlens_call указываешь это имя в поле "server", а нужную операцию — в "tool" (как в API Reference).
   monitor:
     ssh:
       host: "1.2.3.4"                # IP или hostname удалённого сервера
@@ -250,7 +250,7 @@ ssh -i ~/.ssh/id_ed25519 rucode@1.2.3.4 "php /opt/serverlens/bin/serverlens vali
 [MCP] Connecting to server 'production'...
 [MCP:production] Initialized: ServerLens v1.0.0
 [MCP] Discovered 17 tools on 'production'
-[MCP] Ready: 1 server(s), 17 tool(s)
+[MCP] Ready: 1 server(s), 17 remote tool(s), 2 MCP tools
 ```
 
 ---
@@ -313,7 +313,7 @@ cd mcp-client && composer install
 
 ## Готово!
 
-Теперь можно спрашивать в Cursor на естественном языке:
+Можно формулировать запросы **на естественном языке** — Cursor сам вызовет `serverlens_list` / `serverlens_call` и подставит нужный сервер и инструмент. Примеры:
 - *«Покажи последние ошибки nginx»*
 - *«Сколько пользователей зарегистрировалось за март?»*
 - *«Какой статус Docker-контейнеров?»*
@@ -327,5 +327,5 @@ cd mcp-client && composer install
 |----------|-------------|
 | [Архитектура](architecture.md) | Как устроена система, поток данных, диаграммы |
 | [Настройка сервера](server/setup.md) | Подробная конфигурация всех модулей ServerLens |
-| [API Reference](server/api.md) | Полный справочник всех 17 инструментов |
+| [API Reference](server/api.md) | Полный справочник инструментов удалённого ServerLens (логи, конфиги, БД, система) |
 | [MCP-клиент](../mcp-client/docs/README.md) | Детальная документация MCP-прокси |

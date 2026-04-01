@@ -167,6 +167,8 @@ logs:
       max_lines: 3000
 ```
 
+Кроме одиночного файла в `path`, для логов поддерживается **`type: "directory"`**: источник может указывать на каталог с glob-шаблоном; файлы подбираются автоматически, в списке и в параметре `source` они фигурируют как `имя_каталога/имя_файла`.
+
 **MCP-инструменты (tools):**
 
 | Tool | Описание | Параметры |
@@ -471,24 +473,20 @@ chmod 640 /etc/serverlens/config.yaml
 
 | Компонент | Технология | Почему |
 |-----------|-----------|--------|
-| Язык | **Python 3.11+** | Совместимость со стеком (FastAPI), богатая экосистема |
-| MCP Framework | **FastMCP** (mcp-python) | Официальный Python SDK для MCP-серверов |
-| HTTP (опционально) | **uvicorn** | ASGI-сервер для SSE-транспорта |
-| Query builder | **SQLAlchemy Core** | Безопасное построение SQL без ORM |
-| DB driver | **asyncpg** | Асинхронный PostgreSQL, prepared statements |
-| Config | **Pydantic v2** | Валидация конфигурации, строгая типизация |
-| Auth hashing | **argon2-cffi** | Хеширование токенов |
+| Язык | **PHP 8.1+** | Современный PHP, типизация, экосистема Composer |
+| MCP, HTTP/SSE | **ReactPHP** (`react/http`, `react/socket`) | Асинхронный цикл событий для транспорта (SSE, stdio) |
+| Конфигурация | **Symfony YAML** | Парсинг YAML-конфигов |
+| БД | **PDO (PostgreSQL)** | Параметризованные запросы, prepared statements |
+| Хеширование токенов | **`password_hash` (Argon2id)** | Встроенное в PHP |
 | Процесс | **systemd** | Надёжное управление процессом |
 
 ### Зависимости (минимальные)
 ```
-mcp>=1.0
-sqlalchemy>=2.0
-asyncpg>=0.29
-pydantic>=2.0
-pyyaml>=6.0
-argon2-cffi>=23.0
-aiofiles>=23.0
+php: >=8.1
+react/http: ^1.9
+react/socket: ^1.15
+symfony/yaml: ^6.0|^7.0
+ext-pdo_pgsql
 ```
 
 ---
@@ -497,53 +495,54 @@ aiofiles>=23.0
 
 ```
 serverlens/
-├── pyproject.toml
 ├── README.md
+├── description.md
+├── composer.json
+│
+├── src/                        # Серверная часть (ServerLens)
+│   ├── Application.php
+│   ├── Config.php
+│   ├── Mcp/
+│   │   ├── Server.php
+│   │   └── Tool.php
+│   ├── Transport/
+│   │   ├── TransportInterface.php
+│   │   ├── SseTransport.php
+│   │   └── StdioTransport.php
+│   ├── Auth/
+│   │   ├── TokenAuth.php
+│   │   └── RateLimiter.php
+│   ├── Module/
+│   │   ├── ModuleInterface.php
+│   │   ├── LogReader.php
+│   │   ├── ConfigReader.php
+│   │   ├── DbQuery.php
+│   │   └── SystemInfo.php
+│   ├── Security/
+│   │   ├── PathGuard.php
+│   │   └── Redactor.php
+│   └── Audit/
+│       └── AuditLogger.php
+│
+├── bin/serverlens
 ├── config.example.yaml
 │
-├── serverlens/
-│   ├── __init__.py
-│   ├── __main__.py              # Точка входа
-│   ├── server.py                # MCP-сервер (FastMCP)
-│   ├── config.py                # Загрузка и валидация конфигурации (Pydantic)
-│   │
-│   ├── auth/
-│   │   ├── __init__.py
-│   │   ├── token.py             # Генерация, верификация, ротация токенов
-│   │   └── middleware.py        # Auth middleware для SSE-транспорта
-│   │
-│   ├── modules/
-│   │   ├── __init__.py
-│   │   ├── logs.py              # LogReader — чтение логов
-│   │   ├── configs.py           # ConfigReader — чтение конфигов
-│   │   ├── database.py          # DBQuery — запросы к БД
-│   │   └── system.py            # SystemInfo — системная информация
-│   │
-│   ├── security/
-│   │   ├── __init__.py
-│   │   ├── validator.py         # Валидация всех входных параметров
-│   │   ├── rate_limiter.py      # Rate limiting
-│   │   ├── redactor.py          # Редакция секретов из конфигов
-│   │   └── path_guard.py        # Проверка путей (anti path-traversal)
-│   │
-│   ├── audit/
-│   │   ├── __init__.py
-│   │   └── logger.py            # Аудит-логирование
-│   │
-│   └── cli/
-│       ├── __init__.py
-│       └── commands.py          # CLI: token generate, token revoke, validate-config
+├── mcp-client/                 # MCP-прокси (dispatch model, 2 tools)
+│   ├── src/
+│   │   ├── Config.php
+│   │   ├── SshConnection.php
+│   │   └── McpProxy.php
+│   ├── bin/serverlens-mcp
+│   ├── composer.json
+│   └── config.example.yaml
 │
 ├── scripts/
-│   ├── install.sh               # Установка: создание пользователя, systemd-юнит
-│   └── setup_db_users.sql       # SQL для создания read-only пользователей
+│   ├── install.sh
+│   └── setup_db_users.sql
 │
+├── docs/
+├── etc/
 └── tests/
-    ├── test_auth.py
-    ├── test_logs.py
-    ├── test_database.py
-    ├── test_validator.py
-    └── test_security.py
 ```
 
 ---
@@ -670,28 +669,26 @@ WantedBy=multi-user.target
 
 ### Шаг 6: Подключение с компьютера разработчика
 
-В конфигурации MCP-клиента (Cursor `~/.cursor/mcp.json`):
+Рекомендуемый способ — **локальный MCP-прокси** (`mcp-client/`): Cursor подключается по **stdio** к `serverlens-mcp`, а прокси сам устанавливает **SSH** к удалённому ServerLens (прямое подключение Cursor к SSE на сервере больше не является основным сценарием).
+
+После настройки `~/.serverlens/config.yaml` (SSH, пути к PHP и `serverlens` на сервере) добавь в Cursor файл `~/.cursor/mcp.json`:
+
 ```json
 {
   "mcpServers": {
     "serverlens": {
-      "url": "http://localhost:9600/sse",
-      "headers": {
-        "Authorization": "Bearer sl_a1b2c3d4e5f6..."
-      }
+      "command": "php",
+      "args": [
+        "/абсолютный/путь/к/serverlens/mcp-client/bin/serverlens-mcp",
+        "--config",
+        "/абсолютный/путь/к/.serverlens/config.yaml"
+      ]
     }
   }
 }
 ```
 
-Перед работой: пробросить SSH-туннель (или добавить в SSH config):
-```bash
-# ~/.ssh/config
-Host myserver-lens
-  HostName 1.2.3.4
-  User alex
-  LocalForward 9600 127.0.0.1:9600
-```
+Пути к бинарнику прокси и к конфигу должны быть **абсолютными**. Отдельный SSH port-forward на порт ServerLens для MCP-клиента не требуется — туннель строит сам прокси.
 
 ---
 
@@ -747,28 +744,28 @@ Host myserver-lens
 ## 12. Дорожная карта реализации
 
 ### Фаза 1 — MVP (1-2 дня)
-- [ ] Скелет MCP-сервера на FastMCP
-- [ ] Аутентификация по Bearer-токену
-- [ ] LogReader (logs_list, logs_tail, logs_search)
-- [ ] Конфигурация (Pydantic)
-- [ ] Systemd-юнит
+- [x] Скелет MCP-сервера на FastMCP
+- [x] Аутентификация по Bearer-токену
+- [x] LogReader (logs_list, logs_tail, logs_search)
+- [x] Конфигурация (Pydantic)
+- [x] Systemd-юнит
 
 ### Фаза 2 — База данных (1-2 дня)
-- [ ] DBQuery со всеми инструментами
-- [ ] Валидатор запросов (whitelist полей, фильтры)
-- [ ] Read-only пользователь PostgreSQL
-- [ ] Пагинация
+- [x] DBQuery со всеми инструментами
+- [x] Валидатор запросов (whitelist полей, фильтры)
+- [x] Read-only пользователь PostgreSQL
+- [x] Пагинация
 
 ### Фаза 3 — Конфиги и система (0.5 дня)
-- [ ] ConfigReader с автоматической редакцией секретов
-- [ ] SystemInfo
+- [x] ConfigReader с автоматической редакцией секретов
+- [x] SystemInfo
 
 ### Фаза 4 — Hardening (0.5-1 день)
-- [ ] Rate limiting
-- [ ] Аудит-логирование
-- [ ] CLI для управления токенами
-- [ ] Тесты безопасности
-- [ ] Systemd hardening (sandbox)
+- [x] Rate limiting
+- [x] Аудит-логирование
+- [x] CLI для управления токенами
+- [x] Тесты безопасности
+- [x] Systemd hardening (sandbox)
 
 **Общая оценка: 3-5 дней до production-ready.**
 

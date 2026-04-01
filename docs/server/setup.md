@@ -162,7 +162,20 @@ logs:
       path: "/var/log/app/api.log"
       format: "json"
       max_lines: 3000
+
+    # Директории с логами (файлы меняются / ротируются)
+    - name: "app_api_logs"
+      path: "/var/www/app/runtime/logs/api"
+      type: "directory"            # автоматический листинг файлов
+      pattern: "*.log"             # glob-паттерн (по умолчанию *.log)
+      format: "plain"
+      max_lines: 5000
 ```
+
+- `type: "directory"` — ServerLens автоматически находит файлы по паттерну, показывает их в `logs_list` с размерами и датами.
+- Файлы доступны как `"app_api_logs/20251031.log"` в параметре `source`.
+- Удобно для логов с ежедневной ротацией (Yii, Laravel и т.п.).
+- PathGuard защищает от выхода за пределы директории.
 
 **Безопасность:**
 - Путь берётся ТОЛЬКО из конфигурации, не от клиента
