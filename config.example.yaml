@@ -47,6 +47,15 @@ logs:
       format: "postgres"
       max_lines: 2000
 
+    # Логи в директории (автоматический листинг файлов)
+    # Удобно для логов с ежедневной ротацией
+    # - name: "app_api_logs"
+    #   path: "/var/www/app/runtime/logs/api"
+    #   type: "directory"
+    #   pattern: "*.log"
+    #   format: "plain"
+    #   max_lines: 3000
+
 configs:
   sources:
     - name: "nginx_main"

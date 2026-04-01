@@ -12,6 +12,10 @@ final class LogReader implements ModuleInterface
 {
     /** @var array<string, array{path: string, format: string, max_lines: int}> */
     private array $sources = [];
+
+    /** @var array<string, array{path: string, pattern: string, format: string, max_lines: int}> */
+    private array $dirSources = [];
+
     private PathGuard $pathGuard;
 
     public function __construct(Config $config)
@@ -19,11 +23,22 @@ final class LogReader implements ModuleInterface
         $this->pathGuard = new PathGuard();
 
         foreach ($config->getLogSources() as $source) {
-            $this->sources[$source['name']] = [
-                'path' => $source['path'],
-                'format' => $source['format'] ?? 'plain',
-                'max_lines' => (int) ($source['max_lines'] ?? 5000),
-            ];
+            $type = $source['type'] ?? 'file';
+
+            if ($type === 'directory') {
+                $this->dirSources[$source['name']] = [
+                    'path' => rtrim($source['path'], '/'),
+                    'pattern' => $source['pattern'] ?? '*.log',
+                    'format' => $source['format'] ?? 'plain',
+                    'max_lines' => (int) ($source['max_lines'] ?? 5000),
+                ];
+            } else {
+                $this->sources[$source['name']] = [
+                    'path' => $source['path'],
+                    'format' => $source['format'] ?? 'plain',
+                    'max_lines' => (int) ($source['max_lines'] ?? 5000),
+                ];
+            }
         }
 
         $this->pathGuard->registerSources($config->getLogSources());
@@ -99,6 +114,41 @@ final class LogReader implements ModuleInterface
             ];
         }
 
+        foreach ($this->dirSources as $name => $dirSource) {
+            $dirPath = $dirSource['path'];
+            $available = is_dir($dirPath) && is_readable($dirPath);
+            $files = [];
+
+            if ($available) {
+                $pattern = $dirPath . '/' . $dirSource['pattern'];
+                $found = glob($pattern);
+                if ($found !== false) {
+                    usort($found, fn($a, $b) => filemtime($b) - filemtime($a));
+                    foreach (array_slice($found, 0, 50) as $filePath) {
+                        if (is_file($filePath) && is_readable($filePath)) {
+                            $files[] = [
+                                'name' => "{$name}/" . basename($filePath),
+                                'size' => $this->formatBytes(filesize($filePath) ?: 0),
+                                'modified' => date('Y-m-d H:i:s', filemtime($filePath) ?: 0),
+                            ];
+                        }
+                    }
+                }
+            }
+
+            $list[] = [
+                'name' => $name,
+                'type' => 'directory',
+                'path_pattern' => $dirSource['pattern'],
+                'format' => $dirSource['format'],
+                'max_lines' => $dirSource['max_lines'],
+                'available' => $available,
+                'files_count' => count($files),
+                'files' => $files,
+                'hint' => "Use \"{$name}/<filename>\" as source name in logs_tail/logs_search",
+            ];
+        }
+
         return $this->ok(json_encode($list, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
     }
 
@@ -112,7 +162,7 @@ final class LogReader implements ModuleInterface
             return $this->error("Unknown or inaccessible log source: {$source}");
         }
 
-        $maxLines = $this->sources[$source]['max_lines'];
+        $maxLines = $this->getMaxLines($source);
         $lines = min($lines, $maxLines);
 
         $result = $this->readLastLines($path, $lines);
@@ -261,21 +311,56 @@ final class LogReader implements ModuleInterface
 
     private function resolveSource(string $name): ?string
     {
-        if (!isset($this->sources[$name])) {
-            return null;
+        if (isset($this->sources[$name])) {
+            $path = $this->sources[$name]['path'];
+            if (!file_exists($path) || !is_readable($path)) {
+                return null;
+            }
+            $resolved = realpath($path);
+            return $resolved !== false ? $resolved : null;
         }
 
-        $path = $this->sources[$name]['path'];
-        if (!file_exists($path) || !is_readable($path)) {
-            return null;
+        if (str_contains($name, '/')) {
+            [$dirName, $fileName] = explode('/', $name, 2);
+
+            if (!isset($this->dirSources[$dirName])) {
+                return null;
+            }
+
+            if (str_contains($fileName, '/') || str_contains($fileName, '..')) {
+                return null;
+            }
+
+            $filePath = $this->dirSources[$dirName]['path'] . '/' . $fileName;
+            if (!file_exists($filePath) || !is_readable($filePath) || !is_file($filePath)) {
+                return null;
+            }
+
+            $resolved = realpath($filePath);
+            if ($resolved === false) {
+                return null;
+            }
+
+            return $this->pathGuard->isAllowed($resolved) ? $resolved : null;
         }
 
-        $resolved = realpath($path);
-        if ($resolved === false) {
-            return null;
+        return null;
+    }
+
+    private function getMaxLines(string $source): int
+    {
+        if (isset($this->sources[$source])) {
+            return $this->sources[$source]['max_lines'];
         }
 
-        return $resolved;
+        if (str_contains($source, '/')) {
+            $dirName = explode('/', $source, 2)[0];
+            if (isset($this->dirSources[$dirName])) {
+                return $this->dirSources[$dirName]['max_lines'];
+            }
+        }
+
+        return 5000;
     }
 
     /** @return string[] */
