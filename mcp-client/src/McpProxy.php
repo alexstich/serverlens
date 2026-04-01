@@ -9,21 +9,15 @@ final class McpProxy
     /** @var array<string, SshConnection> */
     private array $servers = [];
 
-    /** @var array<string, array{server: string, tool: string}> */
-    private array $toolRegistry = [];
-
-    /** @var array<array{name: string, description: string, inputSchema: array}> */
-    private array $toolDefinitions = [];
+    /** @var array<string, array<array{name: string, description: string, inputSchema: array}>> */
+    private array $remoteTools = [];
 
     /** @var array<string, array> */
     private array $serverConfigs = [];
 
-    private bool $singleServer = false;
-
     public function __construct(Config $config)
     {
         $this->serverConfigs = $config->getServers();
-        $this->singleServer = count($this->serverConfigs) === 1;
 
         foreach ($this->serverConfigs as $name => $serverConfig) {
             fwrite(STDERR, "[MCP] Connecting to server '{$name}'...\n");
@@ -42,12 +36,12 @@ final class McpProxy
             }
 
             $this->servers[$name] = $ssh;
-            $this->discoverTools($name, $ssh, $this->singleServer);
+            $this->discoverTools($name, $ssh);
         }
 
-        $totalTools = count($this->toolDefinitions);
         $totalServers = count($this->servers);
-        fwrite(STDERR, "[MCP] Ready: {$totalServers} server(s), {$totalTools} tool(s)\n");
+        $totalTools = array_sum(array_map('count', $this->remoteTools));
+        fwrite(STDERR, "[MCP] Ready: {$totalServers} server(s), {$totalTools} remote tool(s), 2 MCP tools\n");
     }
 
     public function run(): void
@@ -98,22 +92,58 @@ final class McpProxy
 
     private function handleInitialize(int|string $id): array
     {
-        $serverNames = array_keys($this->servers);
-
         return $this->jsonRpc($id, [
             'protocolVersion' => '2024-11-05',
             'capabilities' => ['tools' => new \stdClass()],
             'serverInfo' => [
                 'name' => 'ServerLens MCP Proxy',
-                'version' => '1.0.0',
-                'connected_servers' => $serverNames,
+                'version' => '2.0.0',
+                'connected_servers' => array_keys($this->servers),
             ],
         ]);
     }
 
     private function handleToolsList(int|string $id): array
     {
-        return $this->jsonRpc($id, ['tools' => $this->toolDefinitions]);
+        $tools = [
+            [
+                'name' => 'serverlens_list',
+                'description' => 'List connected servers and their available tools. Call this first to discover what is available.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'server' => [
+                            'type' => 'string',
+                            'description' => 'Optional: show tools only for this server',
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'name' => 'serverlens_call',
+                'description' => 'Execute a tool on a remote server. Use serverlens_list first to see available servers and tools.',
+                'inputSchema' => [
+                    'type' => 'object',
+                    'properties' => [
+                        'server' => [
+                            'type' => 'string',
+                            'description' => 'Server name (from serverlens_list)',
+                        ],
+                        'tool' => [
+                            'type' => 'string',
+                            'description' => 'Tool name (from serverlens_list)',
+                        ],
+                        'arguments' => [
+                            'type' => 'object',
+                            'description' => 'Tool arguments (see tool description for details)',
+                        ],
+                    ],
+                    'required' => ['server', 'tool'],
+                ],
+            ],
+        ];
+
+        return $this->jsonRpc($id, ['tools' => $tools]);
     }
 
     private function handleToolsCall(int|string $id, array $params): array
@@ -121,16 +151,117 @@ final class McpProxy
         $toolName = $params['name'] ?? '';
         $arguments = $params['arguments'] ?? [];
 
-        if (!isset($this->toolRegistry[$toolName])) {
+        return match ($toolName) {
+            'serverlens_list' => $this->handleList($id, $arguments),
+            'serverlens_call' => $this->handleCall($id, $arguments),
+            default => $this->jsonRpc($id, [
+                'content' => [['type' => 'text', 'text' => "Unknown tool: {$toolName}. Available: serverlens_list, serverlens_call"]],
+                'isError' => true,
+            ]),
+        };
+    }
+
+    private function handleList(int|string $id, array $args): array
+    {
+        $filterServer = $args['server'] ?? null;
+
+        if ($filterServer !== null) {
+            return $this->handleListServer($id, $filterServer);
+        }
+
+        $result = [];
+        foreach ($this->serverConfigs as $name => $_) {
+            $connected = isset($this->servers[$name]);
+            $toolCount = count($this->remoteTools[$name] ?? []);
+            $result[] = [
+                'server' => $name,
+                'status' => $connected ? 'connected' : 'disconnected',
+                'tools_count' => $toolCount,
+            ];
+        }
+
+        $text = json_encode([
+            'hint' => 'Call serverlens_list with {server: "<name>"} to see available tools for a specific server',
+            'servers' => $result,
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        return $this->jsonRpc($id, ['content' => [['type' => 'text', 'text' => $text]]]);
+    }
+
+    private function handleListServer(int|string $id, string $serverName): array
+    {
+        if (!isset($this->serverConfigs[$serverName])) {
+            $available = implode(', ', array_keys($this->serverConfigs));
             return $this->jsonRpc($id, [
-                'content' => [['type' => 'text', 'text' => "Unknown tool: {$toolName}"]],
+                'content' => [['type' => 'text', 'text' => "Unknown server: {$serverName}. Available: {$available}"]],
                 'isError' => true,
             ]);
         }
 
-        $reg = $this->toolRegistry[$toolName];
-        $serverName = $reg['server'];
-        $originalTool = $reg['tool'];
+        $connected = isset($this->servers[$serverName]);
+        $tools = [];
+
+        foreach ($this->remoteTools[$serverName] ?? [] as $tool) {
+            $entry = [
+                'name' => $tool['name'],
+                'description' => $tool['description'],
+            ];
+
+            $schema = $tool['inputSchema'] ?? [];
+            $props = $schema['properties'] ?? [];
+            if (!empty($props) && is_array($props)) {
+                $params = [];
+                $required = $schema['required'] ?? [];
+                foreach ($props as $pName => $pDef) {
+                    $desc = $pDef['description'] ?? $pDef['type'] ?? '';
+                    $req = in_array($pName, $required, true) ? ' (required)' : '';
+                    $params[] = "{$pName}{$req}: {$desc}";
+                }
+                $entry['parameters'] = $params;
+            }
+
+            $tools[] = $entry;
+        }
+
+        $text = json_encode([
+            'server' => $serverName,
+            'status' => $connected ? 'connected' : 'disconnected',
+            'hint' => "Call serverlens_call with {server: \"{$serverName}\", tool: \"<name>\", arguments: {...}}",
+            'tools' => $tools,
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+
+        return $this->jsonRpc($id, ['content' => [['type' => 'text', 'text' => $text]]]);
+    }
+
+    private function handleCall(int|string $id, array $args): array
+    {
+        $serverName = $args['server'] ?? '';
+        $toolName = $args['tool'] ?? '';
+        $toolArgs = $args['arguments'] ?? [];
+
+        if ($serverName === '' || $toolName === '') {
+            return $this->jsonRpc($id, [
+                'content' => [['type' => 'text', 'text' => 'Required: "server" and "tool" parameters']],
+                'isError' => true,
+            ]);
+        }
+
+        if (!isset($this->serverConfigs[$serverName])) {
+            $available = implode(', ', array_keys($this->serverConfigs));
+            return $this->jsonRpc($id, [
+                'content' => [['type' => 'text', 'text' => "Unknown server: {$serverName}. Available: {$available}"]],
+                'isError' => true,
+            ]);
+        }
+
+        $knownTools = array_column($this->remoteTools[$serverName] ?? [], 'name');
+        if (!in_array($toolName, $knownTools, true)) {
+            $available = implode(', ', $knownTools);
+            return $this->jsonRpc($id, [
+                'content' => [['type' => 'text', 'text' => "Unknown tool '{$toolName}' on server '{$serverName}'. Available: {$available}"]],
+                'isError' => true,
+            ]);
+        }
 
         $needReconnect = false;
 
@@ -153,7 +284,7 @@ final class McpProxy
         }
 
         $server = $this->servers[$serverName];
-        $response = $server->callTool($id, $originalTool, $arguments);
+        $response = $server->callTool($id, $toolName, $toolArgs);
 
         if ($response === null) {
             fwrite(STDERR, "[MCP] No response from '{$serverName}', attempting reconnect...\n");
@@ -161,7 +292,7 @@ final class McpProxy
             unset($this->servers[$serverName]);
 
             if ($this->reconnectServer($serverName)) {
-                $response = $this->servers[$serverName]->callTool($id, $originalTool, $arguments);
+                $response = $this->servers[$serverName]->callTool($id, $toolName, $toolArgs);
             }
 
             if ($response === null) {
@@ -198,36 +329,20 @@ final class McpProxy
         }
 
         $this->servers[$serverName] = $ssh;
+
+        if (!isset($this->remoteTools[$serverName])) {
+            $this->discoverTools($serverName, $ssh);
+        }
+
         fwrite(STDERR, "[MCP] Reconnected to '{$serverName}'\n");
 
         return true;
     }
 
-    private function discoverTools(string $serverName, SshConnection $ssh, bool $singleServer): void
+    private function discoverTools(string $serverName, SshConnection $ssh): void
     {
         $tools = $ssh->getTools();
-
-        foreach ($tools as $tool) {
-            $prefixedName = $singleServer
-                ? $tool['name']
-                : "{$serverName}__{$tool['name']}";
-
-            $description = $singleServer
-                ? $tool['description']
-                : "[{$serverName}] {$tool['description']}";
-
-            $this->toolRegistry[$prefixedName] = [
-                'server' => $serverName,
-                'tool' => $tool['name'],
-            ];
-
-            $this->toolDefinitions[] = [
-                'name' => $prefixedName,
-                'description' => $description,
-                'inputSchema' => self::fixSchema($tool['inputSchema'] ?? []),
-            ];
-        }
-
+        $this->remoteTools[$serverName] = $tools;
         fwrite(STDERR, "[MCP] Discovered " . count($tools) . " tools on '{$serverName}'\n");
     }
 
@@ -236,27 +351,6 @@ final class McpProxy
         foreach ($this->servers as $server) {
             $server->close();
         }
-    }
-
-    private static function fixSchema(array $schema): array
-    {
-        $objectKeys = ['properties', 'patternProperties', 'definitions', 'additionalProperties'];
-        foreach ($objectKeys as $key) {
-            if (array_key_exists($key, $schema) && $schema[$key] === []) {
-                $schema[$key] = new \stdClass();
-            }
-        }
-        if (isset($schema['properties']) && is_array($schema['properties'])) {
-            foreach ($schema['properties'] as $k => $v) {
-                if (is_array($v)) {
-                    $schema['properties'][$k] = self::fixSchema($v);
-                }
-            }
-        }
-        if (isset($schema['items']) && is_array($schema['items'])) {
-            $schema['items'] = self::fixSchema($schema['items']);
-        }
-        return $schema;
     }
 
     private function jsonRpc(int|string $id, mixed $result): array
