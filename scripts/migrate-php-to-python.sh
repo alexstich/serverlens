@@ -69,7 +69,7 @@ else
     venv_pkg="python${py_version}-venv"
     if command -v apt-get &>/dev/null; then
         echo -e "  ${YELLOW}\$${NC} apt-get update && apt-get install -y ${venv_pkg}"
-        apt-get update -qq 2>/dev/null
+        apt-get update -qq --allow-releaseinfo-change 2>/dev/null || true
         apt-get install -y "$venv_pkg" 2>/dev/null
         $local_python -c 'import ensurepip' 2>/dev/null || fail "Не удалось установить ${venv_pkg}. Вручную: apt install ${venv_pkg}"
         ok "venv + ensurepip (установлен: ${venv_pkg})"
