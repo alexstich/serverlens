@@ -1,60 +1,60 @@
-# ServerLens MCP-прокси — Документация
+# ServerLens MCP proxy — Documentation
 
-> **Предусловие:** на удалённом сервере уже должен быть установлен ServerLens.
-> Если ещё не установлен — сначала выполните [docs/quickstart.md](../../docs/quickstart.md) (шаги 1–4).
+> **Prerequisite:** ServerLens must already be installed on the remote server.
+> If not, follow [docs/quickstart.md](../../docs/quickstart.md) first (steps 1–4).
 
-Локальный MCP-сервер, который работает на машине разработчика и подключается к удалённым серверам ServerLens через SSH.
+A local MCP server that runs on the developer machine and connects to remote ServerLens instances over SSH.
 
-## Как это работает
+## How it works
 
 ```
 ┌─────────────┐    stdio    ┌──────────────────┐    SSH     ┌──────────────┐
 │   Cursor /   │◄──────────►│  ServerLens MCP   │◄─────────►│  ServerLens   │
-│   Claude     │            │  (на твоей машине)│            │  (на сервере) │
+│   Claude     │            │  (on your machine)│            │  (on server)  │
 └─────────────┘             └──────────────────┘            └──────────────┘
 ```
 
-1. **Cursor** запускает `serverlens-mcp` как stdio MCP-сервер.
-2. **MCP-клиент** устанавливает SSH-соединение к удалённому серверу (keepalive встроен: `ServerAliveInterval=15`).
-3. По SSH запускается **ServerLens** в stdio-режиме.
-4. Cursor видит **два инструмента MCP** — не десятки префиксованных имён, а единый **диспетчер**:
-   - **`serverlens_list`** — список подключённых серверов и удалённых инструментов (логи, БД, конфиги, система и т.д.).
-   - **`serverlens_call`** — вызов конкретного инструмента на выбранном сервере: указываются `server`, `tool` и параметры, как у удалённого ServerLens.
-5. Ответы возвращаются обратно через SSH.
+1. **Cursor** starts `serverlens-mcp` as an stdio MCP server.
+2. The **MCP client** opens an SSH session to the remote server (keepalive built in: `ServerAliveInterval=15`).
+3. **ServerLens** is started over SSH in stdio mode.
+4. Cursor sees **two MCP tools** — not dozens of prefixed names, but a single **dispatcher**:
+   - **`serverlens_list`** — list of connected servers and remote tools (logs, DB, configs, system, etc.).
+   - **`serverlens_call`** — invoke a specific tool on a chosen server: pass `server`, `tool`, and parameters as on the remote ServerLens.
+5. Responses return over SSH.
 
-**Модель v2 (dispatch):** раньше каждый удалённый инструмент экспортировался с префиксом (`production__logs_tail`, `staging__db_query` и десятки других). Теперь в MCP всегда ровно **2 инструмента**; выбор сервера и имени инструмента — внутри аргументов `serverlens_call`. Это упрощает список в Cursor и не раздувает число MCP-инструментов при нескольких серверах.
+**v2 (dispatch) model:** previously each remote tool was exported with a prefix (`production__logs_tail`, `staging__db_query`, and many others). Now MCP always exposes exactly **2 tools**; server and tool name are chosen inside `serverlens_call` arguments. This keeps the Cursor tool list short and avoids inflating MCP tool count when using several servers.
 
-Cursor не знает про SSH — он общается с локальным MCP-сервером.
+Cursor does not know about SSH — it talks to the local MCP server only.
 
-При потере соединения MCP-клиент может **автоматически переподключиться** к удалённым серверам (повторная установка SSH-сессий и повторная инициализация).
+If the connection drops, the MCP client may **automatically reconnect** to remote servers (SSH sessions and re-initialization).
 
 ---
 
-## Установка
+## Installation
 
-### 1. Клонировать репозиторий
+### 1. Clone the repository
 
 ```bash
-git clone git@gitlab.rucode.org:devtools/serverlens.git
+git clone git@github.com:yourorg/serverlens.git
 cd serverlens/mcp-client
 composer install
 ```
 
-### 2. Создать конфигурацию
+### 2. Create configuration
 
 ```bash
 mkdir -p ~/.serverlens
 cp config.example.yaml ~/.serverlens/config.yaml
 ```
 
-Отредактируй `~/.serverlens/config.yaml`:
+Edit `~/.serverlens/config.yaml`:
 
 ```yaml
 servers:
   production:
     ssh:
-      host: "1.2.3.4"        # IP или hostname сервера
-      user: "alex"            # SSH-пользователь
+      host: "1.2.3.4"        # server IP or hostname
+      user: "deploy"          # SSH user
       port: 22
       key: "~/.ssh/id_ed25519"
     remote:
@@ -63,19 +63,19 @@ servers:
       config_path: "/etc/serverlens/config.yaml"
 ```
 
-Имя ключа в `servers` (например `production`) — это **идентификатор сервера** для параметра `server` в `serverlens_call`. Несколько серверов задаются как несколько ключей в `servers:`; префиксы в именах MCP-инструментов больше не используются.
+The key under `servers` (e.g. `production`) is the **server id** for the `server` argument to `serverlens_call`. Multiple servers are multiple keys under `servers:`; MCP tool name prefixes are no longer used.
 
-### 3. Проверить SSH-доступ
+### 3. Verify SSH access
 
-Убедись, что SSH-ключ работает:
+Confirm the SSH key works:
 
 ```bash
-ssh -i ~/.ssh/id_ed25519 alex@1.2.3.4 "php /opt/serverlens/bin/serverlens validate-config"
+ssh -i ~/.ssh/id_ed25519 deploy@1.2.3.4 "php /opt/serverlens/bin/serverlens validate-config"
 ```
 
-### 4. Подключить к Cursor
+### 4. Connect to Cursor
 
-Добавь в `~/.cursor/mcp.json`:
+Add to `~/.cursor/mcp.json`:
 
 ```json
 {
@@ -83,29 +83,29 @@ ssh -i ~/.ssh/id_ed25519 alex@1.2.3.4 "php /opt/serverlens/bin/serverlens valida
     "serverlens": {
       "command": "php",
       "args": [
-        "/полный/путь/к/serverlens/mcp-client/bin/serverlens-mcp",
+        "/full/path/to/serverlens/mcp-client/bin/serverlens-mcp",
         "--config",
-        "/Users/ваш_пользователь/.serverlens/config.yaml"
+        "/Users/your_username/.serverlens/config.yaml"
       ]
     }
   }
 }
 ```
 
-Перезапусти Cursor. ServerLens появится в списке доступных MCP-серверов.
+Restart Cursor. ServerLens appears in the list of available MCP servers.
 
 ---
 
-## Конфигурация
+## Configuration
 
-В конфиге перечисляются один или несколько серверов — каждый с блоком `ssh` и `remote`.
+The config lists one or more servers — each with an `ssh` and `remote` block.
 
 ```yaml
 servers:
   production:
     ssh:
       host: "1.2.3.4"
-      user: "alex"
+      user: "deploy"
       key: "~/.ssh/id_ed25519"
     remote:
       serverlens_path: "/opt/serverlens/bin/serverlens"
@@ -114,76 +114,76 @@ servers:
   staging:
     ssh:
       host: "5.6.7.8"
-      user: "alex"
+      user: "deploy"
       key: "~/.ssh/id_ed25519"
     remote:
       serverlens_path: "/opt/serverlens/bin/serverlens"
       config_path: "/etc/serverlens/config.yaml"
 ```
 
-### Параметры SSH
+### SSH parameters
 
 ```yaml
 ssh:
-  host: "1.2.3.4"              # обязательно
-  user: "alex"                  # обязательно
-  port: 22                      # по умолчанию 22
-  key: "~/.ssh/id_ed25519"      # путь к SSH-ключу (~ раскрывается)
-  options:                       # дополнительные SSH-опции (необязательно)
-    ConnectTimeout: "10"         # таймаут подключения
-    ServerAliveInterval: "30"    # переопределение keepalive (по умолчанию в клиенте уже 15 с)
-    ServerAliveCountMax: "3"     # макс. пропущенных keepalive
+  host: "1.2.3.4"              # required
+  user: "deploy"                # required
+  port: 22                      # default 22
+  key: "~/.ssh/id_ed25519"      # path to SSH key (~ expanded)
+  options:                       # extra SSH options (optional)
+    ConnectTimeout: "10"         # connect timeout
+    ServerAliveInterval: "30"    # override keepalive (client default is 15s)
+    ServerAliveCountMax: "3"     # max missed keepalives
 ```
 
-Keepalive для SSH **встроен** в MCP-клиент (`ServerAliveInterval=15`). Блок `options` указывай, если нужны другие значения или дополнительные опции `ssh`.
+SSH keepalive is **built into** the MCP client (`ServerAliveInterval=15`). Use `options` when you need different values or extra `ssh` options.
 
-### Параметры удалённого сервера
+### Remote server parameters
 
 ```yaml
 remote:
-  php: "php"                                         # путь к PHP (по умолчанию "php")
-  serverlens_path: "/opt/serverlens/bin/serverlens"  # путь к ServerLens
-  config_path: "/etc/serverlens/config.yaml"         # путь к конфигу ServerLens
+  php: "php"                                         # PHP path (default "php")
+  serverlens_path: "/opt/serverlens/bin/serverlens"  # ServerLens binary
+  config_path: "/etc/serverlens/config.yaml"         # ServerLens config path
 ```
 
 ---
 
-## Доступные инструменты (Tools)
+## Available tools
 
-На стороне MCP в Cursor отображаются **только два инструмента**:
+On the MCP side, Cursor shows **only two tools**:
 
-| Инструмент | Назначение |
+| Tool | Purpose |
 |------------|------------|
-| `serverlens_list` | Возвращает список настроенных серверов и **полный каталог удалённых инструментов** с каждого ServerLens (логи, конфиги, БД, система и т.д.) — по сути, то, что раньше «размножалось» префиксами, теперь агрегируется здесь. |
-| `serverlens_call` | Выполняет один удалённый инструмент: в аргументах задаются `server` (имя из `config.yaml`), `tool` (например `logs_tail`, `db_query`) и параметры, как в [API ServerLens](../../docs/server/api.md). |
+| `serverlens_list` | Returns configured servers and the **full catalog of remote tools** from each ServerLens (logs, configs, DB, system, etc.) — what used to be duplicated with prefixes is aggregated here. |
+| `serverlens_call` | Runs one remote tool: arguments include `server` (name from `config.yaml`), `tool` (e.g. `logs_tail`, `db_query`), and parameters as in [ServerLens API](../../docs/server/api.md). |
 
-Фактические операции (`logs_tail`, `logs_search`, `db_query`, `config_read`, `system_docker` и остальные) по-прежнему выполняются **на удалённом ServerLens**; меняется только способ вызова через MCP — через диспетчер `serverlens_call`, а не через отдельное MCP-имя на каждую комбинацию «сервер + инструмент».
-
----
-
-## Примеры использования в Cursor
-
-После подключения MCP к Cursor, можно просто спрашивать на естественном языке:
-
-- *«Покажи последние ошибки nginx»* → ассистент вызовет нужный инструмент через `serverlens_call` (например `logs_search`).
-- *«Сколько пользователей зарегистрировалось за март?»* → `db_count` на выбранном сервере.
-- *«Покажи конфигурацию PostgreSQL»* → `config_read`.
-- *«Какой статус Docker-контейнеров?»* → `system_docker`.
-- *«Найди в логах upstream timed out»* → `logs_search`.
-
-Поведение для пользователя по смыслу то же; меняется внутренняя схема имён MCP (v2: два инструмента и диспетчеризация).
+Actual operations (`logs_tail`, `logs_search`, `db_query`, `config_read`, `system_docker`, etc.) still run **on the remote ServerLens**; only the MCP invocation path changes — via the `serverlens_call` dispatcher instead of a separate MCP name per server+tool pair.
 
 ---
 
-## Устранение проблем
+## Example prompts in Cursor
 
-### MCP не подключается
+After MCP is connected, you can ask in natural language:
+
+- *“Show the latest nginx errors”* → the assistant calls the right tool via `serverlens_call` (e.g. `logs_search`).
+- *“How many users signed up in March?”* → `db_count` on the chosen server.
+- *“Show PostgreSQL configuration”* → `config_read`.
+- *“What is the status of Docker containers?”* → `system_docker`.
+- *“Find upstream timed out in the logs”* → `logs_search`.
+
+From the user’s perspective the behavior is the same; internally MCP naming uses v2 (two tools and dispatch).
+
+---
+
+## Troubleshooting
+
+### MCP does not connect
 
 ```bash
-# Проверь, что скрипт запускается:
+# Check that the script runs:
 php mcp-client/bin/serverlens-mcp --config ~/.serverlens/config.yaml
 
-# В stderr увидишь (пример):
+# stderr may show (example):
 # [MCP] Config: /Users/.../.serverlens/config.yaml
 # [MCP] Connecting to server 'production'...
 # [MCP:production] SSH command: ssh -o BatchMode=yes ...
@@ -192,31 +192,31 @@ php mcp-client/bin/serverlens-mcp --config ~/.serverlens/config.yaml
 # [MCP] Ready: 1 server(s), 17 remote tool(s), 2 MCP tools
 ```
 
-При нескольких серверах первая цифра в `Ready` — число серверов, вторая — суммарное число удалённых инструментов; **MCP tools** всегда **2** (`serverlens_list` и `serverlens_call`).
+With multiple servers, the first number in `Ready` is server count, the second is total remote tools; **MCP tools** is always **2** (`serverlens_list` and `serverlens_call`).
 
-### SSH не подключается
+### SSH does not connect
 
 ```bash
-# Проверь SSH вручную:
-ssh -o BatchMode=yes -i ~/.ssh/id_ed25519 alex@1.2.3.4 echo "ok"
+# Test SSH manually:
+ssh -o BatchMode=yes -i ~/.ssh/id_ed25519 deploy@1.2.3.4 echo "ok"
 
-# Проверь ServerLens на сервере:
-ssh alex@1.2.3.4 "php /opt/serverlens/bin/serverlens validate-config"
+# Test ServerLens on the server:
+ssh deploy@1.2.3.4 "php /opt/serverlens/bin/serverlens validate-config"
 ```
 
-### Инструменты не появляются в Cursor
+### Tools do not appear in Cursor
 
-1. Проверь `~/.cursor/mcp.json` — пути должны быть **абсолютными**
-2. Перезапусти Cursor после изменения конфигурации
-3. Посмотри логи MCP в терминале Cursor (Output → MCP)
+1. Check `~/.cursor/mcp.json` — paths must be **absolute**
+2. Restart Cursor after changing configuration
+3. Check MCP logs in Cursor’s terminal (Output → MCP)
 
 ---
 
-## Связанные документы
+## Related documents
 
-| Документ | Описание |
+| Document | Description |
 |----------|----------|
-| [Быстрый старт (от нуля)](../../docs/quickstart.md) | Пошаговая установка всей системы |
-| [Настройка сервера](../../docs/server/setup.md) | Подробная конфигурация ServerLens |
-| [API Reference](../../docs/server/api.md) | Справочник всех инструментов |
-| [Архитектура](../../docs/architecture.md) | Как устроена система |
+| [Quickstart (from scratch)](../../docs/quickstart.md) | End-to-end installation |
+| [Server setup](../../docs/server/setup.md) | Detailed ServerLens configuration |
+| [API Reference](../../docs/server/api.md) | All tools reference |
+| [Architecture](../../docs/architecture.md) | How the system fits together |

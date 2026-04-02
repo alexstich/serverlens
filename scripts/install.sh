@@ -1,39 +1,39 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# ServerLens — Установочный скрипт (install.sh)
+# ServerLens — Installation Script (install.sh)
 #
-# Описание:
-#   Полная установка ServerLens на сервер. Скрипт выполняет:
-#     1. Проверку системных требований (PHP 8.1+, расширения json, mbstring)
-#     2. Создание системного пользователя 'serverlens' (без login shell)
-#     3. Создание директорий: /opt/serverlens, /etc/serverlens, /var/log/serverlens
-#     4. Копирование файлов проекта (src/, bin/, composer.json) в /opt/serverlens
-#     5. Установку PHP-зависимостей через Composer (--no-dev)
-#     6. Интерактивный мастер настройки:
-#        — автообнаружение сервисов (nginx, postgresql, mysql, redis и др.)
-#        — сканирование логов и конфигурационных файлов
-#        — генерация /etc/serverlens/config.yaml
-#        — опционально: вызов setup_db.sh для настройки PostgreSQL
-#     7. Установку systemd-сервиса (не запускает его)
+# Description:
+#   Full installation of ServerLens on a server. The script performs:
+#     1. System requirements check (PHP 8.1+, extensions: json, mbstring)
+#     2. Creating system user 'serverlens' (no login shell)
+#     3. Creating directories: /opt/serverlens, /etc/serverlens, /var/log/serverlens
+#     4. Copying project files (src/, bin/, composer.json) to /opt/serverlens
+#     5. Installing PHP dependencies via Composer (--no-dev)
+#     6. Interactive setup wizard:
+#        — auto-detection of services (nginx, postgresql, mysql, redis, etc.)
+#        — scanning logs and configuration files
+#        — generating /etc/serverlens/config.yaml
+#        — optionally: running setup_db.sh for PostgreSQL configuration
+#     7. Installing systemd service (does not start it)
 #
-# Запуск:
-#   sudo bash scripts/install.sh              — с интерактивным мастером
-#   sudo bash scripts/install.sh --no-wizard  — только установка, конфиг вручную
+# Usage:
+#   sudo bash scripts/install.sh              — with interactive wizard
+#   sudo bash scripts/install.sh --no-wizard  — install only, configure manually
 #
-# Безопасность:
-#   - Требует root-прав (проверяет id -u)
-#   - При перезаписи config.yaml создаёт резервную копию (.bak.YYYYMMDDHHMMSS)
-#   - НЕ удаляет и НЕ изменяет существующие конфигурации системных сервисов
-#   - Все файлы конфигурации ServerLens получают права 640 (root:serverlens)
-#   - Мастер настройки только ЧИТАЕТ обнаруженные логи/конфиги, ничего не изменяет
-#   - Идемпотентен: повторный запуск безопасен (useradd проверяет существование)
-#   - Composer устанавливается только при отсутствии (с официального источника)
+# Security:
+#   - Requires root privileges (checks id -u)
+#   - Creates a backup (.bak.YYYYMMDDHHMMSS) before overwriting config.yaml
+#   - Does NOT delete or modify existing system service configurations
+#   - All ServerLens config files get permissions 640 (root:serverlens)
+#   - The setup wizard only READS discovered logs/configs, modifies nothing
+#   - Idempotent: safe to run multiple times (useradd checks existence)
+#   - Composer is installed only if missing (from official source)
 #
-# Что НЕ делает скрипт:
-#   - Не удаляет никакие системные пакеты или пользователей
-#   - Не изменяет настройки nginx, postgresql, mysql и других сервисов
-#   - Не открывает сетевые порты и не меняет файрвол
-#   - Не запускает сервис автоматически
+# What the script does NOT do:
+#   - Does not remove any system packages or users
+#   - Does not modify nginx, postgresql, mysql or other service settings
+#   - Does not open network ports or change firewall rules
+#   - Does not start the service automatically
 # ═══════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -79,51 +79,157 @@ for arg in "$@"; do
 done
 
 # ═══════════════════════════════════════════════════
-# Наборы известных сервисов, логов, конфигов
+# Known services, logs, configs
 # ═══════════════════════════════════════════════════
 
-ALL_SERVICES=(nginx apache2 postgresql mysql redis php-fpm docker rabbitmq fail2ban)
+ALL_SERVICES=(
+    # Web servers / reverse proxies
+    nginx apache2 caddy haproxy traefik
+    # Databases
+    postgresql mysql mongodb elasticsearch clickhouse memcached
+    # App runtimes
+    php-fpm tomcat gunicorn uwsgi supervisor
+    # Cache / message brokers
+    redis rabbitmq kafka mosquitto
+    # Containers
+    docker
+    # Mail
+    postfix dovecot
+    # Monitoring
+    prometheus grafana
+    # Security
+    fail2ban crowdsec
+    # CI/CD
+    gitlab-runner jenkins
+)
 
 declare -A SVC_UNITS
 SVC_UNITS=(
+    # Web servers
     [nginx]="nginx"
     [apache2]="apache2 httpd"
+    [caddy]="caddy"
+    [haproxy]="haproxy"
+    [traefik]="traefik"
+    # Databases
     [postgresql]="postgresql"
     [mysql]="mysql mysqld mariadb"
-    [redis]="redis-server redis"
+    [mongodb]="mongod mongos"
+    [elasticsearch]="elasticsearch"
+    [clickhouse]="clickhouse-server"
+    [memcached]="memcached"
+    # App runtimes
     [php-fpm]=""
-    [docker]="docker"
+    [tomcat]="tomcat tomcat9 tomcat10"
+    [gunicorn]="gunicorn"
+    [uwsgi]="uwsgi"
+    [supervisor]="supervisor supervisord"
+    # Cache / message brokers
+    [redis]="redis-server redis"
     [rabbitmq]="rabbitmq-server"
+    [kafka]="kafka confluent-kafka"
+    [mosquitto]="mosquitto"
+    # Containers
+    [docker]="docker"
+    # Mail
+    [postfix]="postfix"
+    [dovecot]="dovecot"
+    # Monitoring
+    [prometheus]="prometheus"
+    [grafana]="grafana-server"
+    # Security
     [fail2ban]="fail2ban"
+    [crowdsec]="crowdsec"
+    # CI/CD
+    [gitlab-runner]="gitlab-runner"
+    [jenkins]="jenkins"
 )
 
 declare -A SVC_LOGS
 SVC_LOGS=(
+    # Web servers
     [nginx]="/var/log/nginx/access.log:nginx_combined /var/log/nginx/error.log:plain"
     [apache2]="/var/log/apache2/access.log:plain /var/log/apache2/error.log:plain /var/log/httpd/access_log:plain /var/log/httpd/error_log:plain"
+    [caddy]="/var/log/caddy:plain"
+    [haproxy]="/var/log/haproxy.log:plain"
+    [traefik]="/var/log/traefik:plain"
+    # Databases
     [postgresql]="/var/log/postgresql:postgres"
     [mysql]="/var/log/mysql/error.log:plain"
-    [redis]="/var/log/redis/redis-server.log:plain"
+    [mongodb]="/var/log/mongodb/mongod.log:json"
+    [elasticsearch]="/var/log/elasticsearch:json"
+    [clickhouse]="/var/log/clickhouse-server:plain"
+    [memcached]=""
+    # App runtimes
     [php-fpm]=""
-    [docker]=""
+    [tomcat]="/var/log/tomcat:plain /var/log/tomcat9:plain /var/log/tomcat10:plain"
+    [gunicorn]=""
+    [uwsgi]=""
+    [supervisor]="/var/log/supervisor:plain"
+    # Cache / message brokers
+    [redis]="/var/log/redis/redis-server.log:plain"
     [rabbitmq]="/var/log/rabbitmq:plain"
+    [kafka]="/var/log/kafka:plain"
+    [mosquitto]="/var/log/mosquitto/mosquitto.log:plain"
+    # Containers
+    [docker]=""
+    # Mail
+    [postfix]="/var/log/mail.log:plain /var/log/maillog:plain"
+    [dovecot]="/var/log/dovecot.log:plain"
+    # Monitoring
+    [prometheus]="/var/log/prometheus:plain"
+    [grafana]="/var/log/grafana:plain"
+    # Security
     [fail2ban]="/var/log/fail2ban.log:plain"
+    [crowdsec]="/var/log/crowdsec.log:plain"
+    # CI/CD
+    [gitlab-runner]=""
+    [jenkins]="/var/log/jenkins/jenkins.log:plain"
 )
 
 declare -A SVC_CONFIGS
 SVC_CONFIGS=(
+    # Web servers
     [nginx]="/etc/nginx/nginx.conf /etc/nginx/sites-enabled/ /etc/nginx/conf.d/"
     [apache2]="/etc/apache2/apache2.conf /etc/httpd/conf/httpd.conf"
+    [caddy]="/etc/caddy/Caddyfile"
+    [haproxy]="/etc/haproxy/haproxy.cfg"
+    [traefik]="/etc/traefik/traefik.yml /etc/traefik/traefik.toml"
+    # Databases
     [postgresql]=""
     [mysql]="/etc/mysql/mysql.conf.d/mysqld.cnf /etc/mysql/my.cnf"
-    [redis]="/etc/redis/redis.conf"
+    [mongodb]="/etc/mongod.conf"
+    [elasticsearch]="/etc/elasticsearch/elasticsearch.yml"
+    [clickhouse]="/etc/clickhouse-server/config.xml /etc/clickhouse-server/users.xml"
+    [memcached]="/etc/memcached.conf"
+    # App runtimes
     [php-fpm]=""
-    [docker]="/etc/docker/daemon.json"
+    [tomcat]=""
+    [gunicorn]=""
+    [uwsgi]=""
+    [supervisor]="/etc/supervisor/supervisord.conf /etc/supervisor/conf.d/"
+    # Cache / message brokers
+    [redis]="/etc/redis/redis.conf"
     [rabbitmq]="/etc/rabbitmq/rabbitmq.conf"
-    [fail2ban]=""
+    [kafka]=""
+    [mosquitto]="/etc/mosquitto/mosquitto.conf"
+    # Containers
+    [docker]="/etc/docker/daemon.json"
+    # Mail
+    [postfix]="/etc/postfix/main.cf"
+    [dovecot]="/etc/dovecot/dovecot.conf"
+    # Monitoring
+    [prometheus]="/etc/prometheus/prometheus.yml"
+    [grafana]="/etc/grafana/grafana.ini"
+    # Security
+    [fail2ban]="/etc/fail2ban/jail.local"
+    [crowdsec]="/etc/crowdsec/config.yaml"
+    # CI/CD
+    [gitlab-runner]="/etc/gitlab-runner/config.toml"
+    [jenkins]=""
 )
 
-WORKER_PATTERNS="gischannel|asyncqueue|asyncdispatch|async-|massexport|queue-"
+WORKER_PATTERNS="worker|queue|celery|sidekiq|resque|bullmq|supervisor|delayed|background|async|horizon|scheduler|cron"
 
 FOUND_SERVICES=()
 SELECTED_SERVICES=()
@@ -134,7 +240,7 @@ SYSTEM_SVC_YAML=""
 DOCKER_YAML=""
 
 # ═══════════════════════════════════════════════════
-# Обнаружение сервисов
+# Service discovery
 # ═══════════════════════════════════════════════════
 
 CACHED_UNITS=""
@@ -217,7 +323,7 @@ discover_phpfpm_paths() {
 }
 
 # ═══════════════════════════════════════════════════
-# Визард — логи
+# Wizard — logs
 # ═══════════════════════════════════════════════════
 
 make_log_name() {
@@ -229,7 +335,7 @@ make_log_name() {
 }
 
 wizard_logs() {
-    echo -e "\n${BOLD}  ── Лог-файлы ──${NC}\n"
+    echo -e "\n${BOLD}  -- Log files --${NC}\n"
 
     local idx=1
     declare -a found_logs=() found_formats=() found_names=()
@@ -281,30 +387,51 @@ wizard_logs() {
         fi
     done
 
-    while IFS= read -r yiilog; do
-        [[ -z "$yiilog" ]] && continue
-        local yiidir
-        yiidir=$(dirname "$yiilog")
-        local appdir
-        appdir=$(echo "$yiilog" | sed -E 's|/runtime/logs/.*||')
-        local appname
-        appname=$(basename "$appdir")
-        local logbase
-        logbase=$(basename "$yiilog" .log)
-        local yiiname="yii_${appname}_${logbase}"
-        yiiname="${yiiname//[^a-zA-Z0-9_]/_}"
-        found_logs+=("$yiilog"); found_formats+=("plain"); found_names+=("$yiiname")
-        local sz; sz=$(du -sh "$yiilog" 2>/dev/null | cut -f1)
-        info "[${idx}] $yiilog (yii, ${sz})"
-        ((idx++))
-    done < <(find /var/www -path '*/runtime/logs/*.log' -readable 2>/dev/null | head -20 || true)
+    # Framework log auto-discovery
+    local -A fw_patterns=(
+        [yii]='*/runtime/logs/*.log'
+        [laravel]='*/storage/logs/*.log'
+        [symfony]='*/var/log/*.log'
+        [rails]='*/log/*.log'
+        [django]='*/logs/*.log'
+        [wordpress]='*/wp-content/debug.log'
+        [magento]='*/var/log/*.log'
+        [cakephp]='*/tmp/logs/*.log'
+        [codeigniter]='*/writable/logs/*.log'
+        [nextjs]='*/.next/server/*.log'
+        [nuxtjs]='*/.output/server/*.log'
+        [spring]='*/logs/spring*.log'
+        [generic]='*/logs/*.log'
+    )
+    local search_roots=(/var/www /srv /opt /home)
+    declare -A seen_logs=()
+    for fw in "${!fw_patterns[@]}"; do
+        for sroot in "${search_roots[@]}"; do
+            [[ -d "$sroot" ]] || continue
+            while IFS= read -r fwlog; do
+                [[ -z "$fwlog" ]] && continue
+                [[ -n "${seen_logs[$fwlog]:-}" ]] && continue
+                seen_logs[$fwlog]=1
+                local appdir appname logbase fwname
+                appdir=$(echo "$fwlog" | sed -E 's|/(runtime|storage|var|wp-content|tmp|writable|\.next|\.output)/.*||; s|/logs?/[^/]*$||; s|/log/[^/]*$||')
+                appname=$(basename "$appdir")
+                logbase=$(basename "$fwlog" .log)
+                fwname="${fw}_${appname}_${logbase}"
+                fwname="${fwname//[^a-zA-Z0-9_]/_}"
+                found_logs+=("$fwlog"); found_formats+=("plain"); found_names+=("$fwname")
+                local sz; sz=$(du -sh "$fwlog" 2>/dev/null | cut -f1)
+                info "[${idx}] $fwlog (${fw}, ${sz})"
+                ((idx++))
+            done < <(find "$sroot" -maxdepth 5 -path "${fw_patterns[$fw]}" -readable 2>/dev/null | head -20 || true)
+        done
+    done
 
     if (( ${#found_logs[@]} == 0 )); then
-        warn "Лог-файлы не обнаружены"
+        warn "No log files found"
     else
         echo ""
         local sel
-        sel=$(ask_input "Какие логи включить? (all / номера через запятую / Enter — пропустить)" "all")
+        sel=$(ask_input "Which logs to include? (all / comma-separated numbers / Enter = all)" "all")
         if [[ "${sel,,}" == "all" ]]; then
             for i in "${!found_logs[@]}"; do
                 append_log "${found_names[$i]}" "${found_logs[$i]}" "${found_formats[$i]}"
@@ -319,30 +446,34 @@ wizard_logs() {
     fi
 
     echo ""
-    while ask_yn "Добавить свой путь к файлу лога?" "n"; do
+    info "If there are log files that were not discovered automatically,"
+    info "you can add them manually (e.g. /var/log/myapp/app.log)."
+    while ask_yn "Add a log file manually?" "n"; do
         local cpath cname cfmt
-        cpath=$(ask_input "Путь к файлу лога")
-        [[ ! -f "$cpath" ]] && { warn "Файл не найден: $cpath"; continue; }
-        cname=$(ask_input "Имя источника" "$(make_log_name "$cpath" "custom")")
-        cfmt=$(ask_input "Формат (plain/json/nginx_combined/postgres)" "plain")
+        cpath=$(ask_input "Full path to log file")
+        [[ ! -f "$cpath" ]] && { warn "File not found: $cpath"; continue; }
+        cname=$(ask_input "Display name (shown in UI)" "$(make_log_name "$cpath" "custom")")
+        cfmt=$(ask_input "Log format (plain/json/nginx_combined/postgres)" "plain")
         append_log "$cname" "$cpath" "$cfmt"
-        ok "Добавлен файл: $cname"
+        ok "Added file: $cname"
     done
 
     echo ""
-    while ask_yn "Добавить папку с логами? (все *.log внутри будут подхвачены)" "n"; do
+    info "You can also add an entire directory — ServerLens will monitor"
+    info "all log files inside it (e.g. /var/www/myapp/runtime/logs)."
+    while ask_yn "Add a directory with logs?" "n"; do
         local dpath dname dfmt dpattern
-        dpath=$(ask_input "Путь к папке с логами")
+        dpath=$(ask_input "Full path to directory")
         if [[ ! -d "$dpath" ]]; then
-            warn "Папка не найдена: $dpath"; continue
+            warn "Directory not found: $dpath"; continue
         fi
         local logcount; logcount=$(find "$dpath" -maxdepth 1 -name '*.log' 2>/dev/null | wc -l)
-        info "Найдено файлов *.log: ${logcount}"
-        dname=$(ask_input "Имя источника" "custom_$(basename "$dpath" | sed 's/[^a-zA-Z0-9_]/_/g')")
-        dpattern=$(ask_input "Маска файлов" "*.log")
-        dfmt=$(ask_input "Формат (plain/json/nginx_combined/postgres)" "plain")
+        info "Found *.log files in directory: ${logcount}"
+        dname=$(ask_input "Display name (shown in UI)" "custom_$(basename "$dpath" | sed 's/[^a-zA-Z0-9_]/_/g')")
+        dpattern=$(ask_input "File pattern (which files to read)" "*.log")
+        dfmt=$(ask_input "Log format (plain/json/nginx_combined/postgres)" "plain")
         append_log_dir "$dname" "$dpath" "$dpattern" "$dfmt"
-        ok "Добавлена папка: $dpath ($dpattern)"
+        ok "Added directory: $dpath ($dpattern)"
     done
 }
 
@@ -355,20 +486,20 @@ append_log_dir() {
 }
 
 fix_log_permissions() {
-    echo -e "\n${BOLD}  ── Права на лог-файлы ──${NC}\n"
+    echo -e "\n${BOLD}  -- Log file permissions --${NC}\n"
 
     if ! getent group adm &>/dev/null; then
-        warn "Группа 'adm' не найдена (не Ubuntu/Debian?)"
+        warn "'adm' group not found (not Ubuntu/Debian?)"
         echo ""
-        info "ServerLens читает логи от имени пользователя serverlens."
-        info "Без группы 'adm' нужно вручную дать доступ к лог-файлам."
+        info "ServerLens reads logs as the serverlens system user."
+        info "Without the 'adm' group, you need to grant access to log files manually."
         echo ""
-        info "Для каждого лога выполните:"
+        info "For each log file, run:"
         echo ""
-        echo "    sudo chgrp serverlens /путь/к/лог-файлу"
-        echo "    sudo chmod 640 /путь/к/лог-файлу"
+        echo "    sudo chgrp serverlens /path/to/logfile"
+        echo "    sudo chmod 640 /path/to/logfile"
         echo ""
-        info "Пример для nginx:"
+        info "Example for nginx:"
         echo ""
         echo "    sudo chgrp serverlens /var/log/nginx/access.log /var/log/nginx/error.log"
         echo "    sudo chmod 640 /var/log/nginx/access.log /var/log/nginx/error.log"
@@ -385,7 +516,7 @@ fix_log_permissions() {
         perms=$(stat -c '%a' "$f" 2>/dev/null || echo "000")
         if [[ "$grp" == "root" ]] && (( (8#$perms & 8#040) == 0 )); then
             chgrp adm "$f" 2>/dev/null && chmod 640 "$f" 2>/dev/null && {
-                ok "$f → root:adm 640"
+                ok "$f -> root:adm 640"
                 ((fixed++)) || true
             }
         fi
@@ -396,7 +527,7 @@ fix_log_permissions() {
         dir_perms=$(stat -c '%a' /var/log/rabbitmq 2>/dev/null || echo "000")
         if (( (8#$dir_perms & 8#050) == 0 )); then
             chmod g+rx /var/log/rabbitmq 2>/dev/null && {
-                ok "/var/log/rabbitmq/ → добавлен group read+execute"
+                ok "/var/log/rabbitmq/ -> added group read+execute"
                 ((fixed++)) || true
             }
         fi
@@ -406,17 +537,57 @@ fix_log_permissions() {
             fperms=$(stat -c '%a' "$f" 2>/dev/null || echo "000")
             if (( (8#$fperms & 8#040) == 0 )); then
                 chmod g+r "$f" 2>/dev/null && {
-                    ok "$f → добавлен group read"
+                    ok "$f -> added group read"
                     ((fixed++)) || true
                 }
             fi
         done
     fi
 
+    # Grant serverlens group access to service log directories
+    # that are not readable by adm
+    for svc in "${SELECTED_SERVICES[@]}"; do
+        local log_dirs=()
+        case "$svc" in
+            postgresql)    [[ -d "/var/log/postgresql" ]] && log_dirs+=("/var/log/postgresql") ;;
+            redis)         [[ -d "/var/log/redis" ]] && log_dirs+=("/var/log/redis") ;;
+            mongodb)       [[ -d "/var/log/mongodb" ]] && log_dirs+=("/var/log/mongodb") ;;
+            elasticsearch) [[ -d "/var/log/elasticsearch" ]] && log_dirs+=("/var/log/elasticsearch") ;;
+            clickhouse)    [[ -d "/var/log/clickhouse-server" ]] && log_dirs+=("/var/log/clickhouse-server") ;;
+            kafka)         [[ -d "/var/log/kafka" ]] && log_dirs+=("/var/log/kafka") ;;
+            grafana)       [[ -d "/var/log/grafana" ]] && log_dirs+=("/var/log/grafana") ;;
+            tomcat)
+                for d in /var/log/tomcat /var/log/tomcat9 /var/log/tomcat10; do
+                    [[ -d "$d" ]] && log_dirs+=("$d")
+                done ;;
+        esac
+        for ldir in "${log_dirs[@]}"; do
+            local dgrp
+            dgrp=$(stat -c '%G' "$ldir" 2>/dev/null || echo "")
+            if [[ -n "$dgrp" && "$dgrp" != "root" && "$dgrp" != "adm" && "$dgrp" != "serverlens" ]]; then
+                if command -v setfacl &>/dev/null; then
+                    setfacl -R -m g:serverlens:rx "$ldir" 2>/dev/null && \
+                    setfacl -d -m g:serverlens:rx "$ldir" 2>/dev/null && {
+                        ok "$ldir -> ACL granted to serverlens group"
+                        ((fixed++)) || true
+                    }
+                else
+                    chmod g+rx "$ldir" 2>/dev/null && {
+                        ok "$ldir -> added group read+execute"
+                        ((fixed++)) || true
+                    }
+                    for f in "$ldir"/*.log*; do
+                        [[ -f "$f" ]] && chmod g+r "$f" 2>/dev/null
+                    done
+                fi
+            fi
+        done
+    done
+
     if (( fixed > 0 )); then
         echo ""
-        info "Logrotate: после ротации логов права могут сброситься."
-        info "Директива 'create' в конфиге logrotate гарантирует нужные права."
+        info "Logrotate: permissions may reset after log rotation."
+        info "A 'create' directive in logrotate config preserves correct permissions."
         echo ""
 
         declare -a lr_files=() lr_create=()
@@ -434,40 +605,40 @@ fix_log_permissions() {
 
         if (( ${#lr_files[@]} > 0 )); then
             for i in "${!lr_files[@]}"; do
-                warn "${lr_files[$i]} — отсутствует директива '${lr_create[$i]}'"
+                warn "${lr_files[$i]} — missing '${lr_create[$i]}' directive"
             done
             echo ""
-            if ask_yn "Добавить директивы 'create' в logrotate автоматически?" "y"; then
+            if ask_yn "Add 'create' directives to logrotate automatically?" "y"; then
                 for i in "${!lr_files[@]}"; do
                     if sed -i '/{/a\    '"${lr_create[$i]}" "${lr_files[$i]}" 2>/dev/null; then
-                        ok "${lr_files[$i]} — добавлено '${lr_create[$i]}'"
+                        ok "${lr_files[$i]} — added '${lr_create[$i]}'"
                     else
-                        warn "Не удалось изменить ${lr_files[$i]}"
-                        info "  Выполните вручную: sudo nano ${lr_files[$i]}"
-                        info "  Добавьте строку '${lr_create[$i]}' внутри блока { ... }"
+                        warn "Failed to modify ${lr_files[$i]}"
+                        info "  Run manually: sudo nano ${lr_files[$i]}"
+                        info "  Add the line '${lr_create[$i]}' inside the { ... } block"
                     fi
                 done
             else
-                info "Добавьте вручную:"
+                info "Add manually:"
                 for i in "${!lr_files[@]}"; do
                     info "  sudo nano ${lr_files[$i]}"
-                    info "  → внутри блока { ... } добавьте строку: ${lr_create[$i]}"
+                    info "  -> inside the { ... } block, add: ${lr_create[$i]}"
                 done
             fi
         else
-            ok "Конфигурация logrotate уже содержит нужные директивы"
+            ok "Logrotate configs already contain the required directives"
         fi
     else
-        ok "Права на лог-файлы в порядке"
+        ok "Log file permissions are correct"
     fi
 }
 
 # ═══════════════════════════════════════════════════
-# Визард — конфиги
+# Wizard — configs
 # ═══════════════════════════════════════════════════
 
 wizard_configs() {
-    echo -e "\n${BOLD}  ── Конфигурационные файлы ──${NC}\n"
+    echo -e "\n${BOLD}  -- Configuration files --${NC}\n"
 
     local idx=1
     declare -a found_cfgs=() found_cfg_names=() found_cfg_redacts=()
@@ -494,7 +665,7 @@ wizard_configs() {
                 found_cfg_names+=("${svc}_$(basename "$cpath")")
                 found_cfg_redacts+=("")
                 local cnt; cnt=$(find "$cpath" -maxdepth 1 -type f 2>/dev/null | wc -l)
-                info "[${idx}] $cpath (директория, ${cnt} файлов)"; ((idx++))
+                info "[${idx}] $cpath (directory, ${cnt} files)"; ((idx++))
             elif [[ -f "$cpath" ]]; then
                 found_cfgs+=("$cpath")
                 local bname; bname=$(basename "$cpath" .conf); bname="${bname//[^a-zA-Z0-9_]/_}"
@@ -509,11 +680,11 @@ wizard_configs() {
     done
 
     if (( ${#found_cfgs[@]} == 0 )); then
-        warn "Конфигурационные файлы не обнаружены"
+        warn "No configuration files found"
     else
         echo ""
         local sel
-        sel=$(ask_input "Какие конфиги включить? (all / номера через запятую / Enter — пропустить)" "all")
+        sel=$(ask_input "Which configs to include? (all / comma-separated numbers / Enter = all)" "all")
         if [[ "${sel,,}" == "all" ]]; then
             for i in "${!found_cfgs[@]}"; do
                 append_config "${found_cfg_names[$i]}" "${found_cfgs[$i]}" "${found_cfg_redacts[$i]}"
@@ -528,13 +699,16 @@ wizard_configs() {
     fi
 
     echo ""
-    while ask_yn "Добавить свой путь к конфигу?" "n"; do
+    info "If there are config files that were not discovered automatically,"
+    info "you can add them manually. ServerLens will track changes and display"
+    info "their contents (e.g. /etc/myapp/config.ini)."
+    while ask_yn "Add a config file manually?" "n"; do
         local cpath cname
-        cpath=$(ask_input "Путь к файлу/директории")
-        [[ ! -e "$cpath" ]] && { warn "Путь не найден: $cpath"; continue; }
-        cname=$(ask_input "Имя источника" "custom_$(basename "$cpath" | sed 's/[^a-zA-Z0-9_]/_/g')")
+        cpath=$(ask_input "Full path to file or directory")
+        [[ ! -e "$cpath" ]] && { warn "Path not found: $cpath"; continue; }
+        cname=$(ask_input "Display name (shown in UI)" "custom_$(basename "$cpath" | sed 's/[^a-zA-Z0-9_]/_/g')")
         append_config "$cname" "$cpath" ""
-        ok "Добавлен: $cname"
+        ok "Added: $cname"
     done
 }
 
@@ -552,13 +726,13 @@ append_config() {
 }
 
 # ═══════════════════════════════════════════════════
-# Визард — системный мониторинг
+# Wizard — system monitoring
 # ═══════════════════════════════════════════════════
 
 wizard_system() {
-    echo -e "\n${BOLD}  ── Системный мониторинг ──${NC}\n"
+    echo -e "\n${BOLD}  -- System monitoring --${NC}\n"
 
-    if ! ask_yn "Включить мониторинг системы (диск, память, сервисы, процессы)?" "y"; then
+    if ! ask_yn "Enable system monitoring (disk, memory, services, processes)?" "y"; then
         return
     fi
 
@@ -577,7 +751,7 @@ wizard_system() {
 
     if (( ${#FOUND_WORKERS[@]} > 0 )); then
         echo ""
-        info "Найденные воркеры/очереди:"
+        info "Discovered workers/queues:"
         local widx=1
         for w in "${FOUND_WORKERS[@]}"; do
             local wstatus
@@ -587,7 +761,7 @@ wizard_system() {
         done
         echo ""
         local sel
-        sel=$(ask_input "Какие воркеры добавить? (all / номера через запятую / Enter — пропустить)" "all")
+        sel=$(ask_input "Which workers to add? (all / comma-separated numbers / Enter = all)" "all")
         if [[ "${sel,,}" == "all" ]]; then
             for w in "${FOUND_WORKERS[@]}"; do
                 SYSTEM_SVC_YAML+="    - \"${w}\"\n"
@@ -608,7 +782,7 @@ wizard_system() {
         local stacks
         stacks=$(docker stack ls --format '{{.Name}}' 2>/dev/null || docker compose ls --format '{{.Name}}' 2>/dev/null || true)
         if [[ -n "$stacks" ]]; then
-            info "Найденные Docker-стеки:"
+            info "Discovered Docker stacks:"
             local didx=1
             declare -a stack_list=()
             while IFS= read -r s; do
@@ -617,7 +791,7 @@ wizard_system() {
             done <<< "$stacks"
             echo ""
             local ssel
-            ssel=$(ask_input "Какие стеки мониторить? (all / номера через запятую / Enter — пропустить)" "all")
+            ssel=$(ask_input "Which stacks to monitor? (all / comma-separated numbers / Enter = all)" "all")
             if [[ "${ssel,,}" == "all" ]]; then
                 for s in "${stack_list[@]}"; do DOCKER_YAML+="    - \"${s}\"\n"; done
             elif [[ -n "$ssel" ]]; then
@@ -634,23 +808,23 @@ wizard_system() {
 }
 
 # ═══════════════════════════════════════════════════
-# Генерация config.yaml (без секции databases)
+# Generate config.yaml (without databases section)
 # ═══════════════════════════════════════════════════
 
 generate_config() {
-    echo -e "\n${BOLD}  ── Генерация config.yaml ──${NC}\n"
+    echo -e "\n${BOLD}  -- Generating config.yaml --${NC}\n"
 
     local cfg="${CONFIG_DIR}/config.yaml"
 
     if [[ -f "$cfg" ]]; then
-        warn "Конфиг ${cfg} уже существует"
-        if ! ask_yn "Перезаписать? (резервная копия будет создана)" "n"; then
-            ok "Конфиг не изменён"
+        warn "Config ${cfg} already exists"
+        if ! ask_yn "Overwrite? (a backup will be created)" "n"; then
+            ok "Config unchanged"
             return
         fi
         local backup="${cfg}.bak.$(date +%Y%m%d%H%M%S)"
         cp "$cfg" "$backup"
-        ok "Резервная копия: ${backup}"
+        ok "Backup saved: ${backup}"
     fi
 
     cat > "$cfg" <<'HEADER'
@@ -703,59 +877,59 @@ HEADER
     chown root:${SERVICE_USER} "$cfg" 2>/dev/null || true
     chmod 640 "$cfg"
 
-    ok "Конфигурация записана: ${cfg}"
+    ok "Configuration written: ${cfg}"
 }
 
 # ═══════════════════════════════════════════════════
-# Фазы установки
+# Installation phases
 # ═══════════════════════════════════════════════════
 
 phase_checks() {
-    echo -e "\n${BOLD}[1/7] Проверка системы${NC}"
+    echo -e "\n${BOLD}[1/7] System check${NC}"
 
-    [[ "$(id -u)" -ne 0 ]] && fail "Запустите от root: sudo bash scripts/install.sh"
+    [[ "$(id -u)" -ne 0 ]] && fail "Run as root: sudo bash scripts/install.sh"
 
-    command -v php &>/dev/null || fail "PHP не найден. Установите PHP 8.1+"
+    command -v php &>/dev/null || fail "PHP not found. Install PHP 8.1+"
 
     local php_major php_minor
     php_major=$(php -r 'echo PHP_MAJOR_VERSION;')
     php_minor=$(php -r 'echo PHP_MINOR_VERSION;')
 
-    if (( php_major < 8 || (php_major == 8 && php_minor < 1) )); then fail "Требуется PHP 8.1+, найден ${php_major}.${php_minor}"; fi
+    if (( php_major < 8 || (php_major == 8 && php_minor < 1) )); then fail "PHP 8.1+ required, found ${php_major}.${php_minor}"; fi
     ok "PHP ${php_major}.${php_minor}"
 
     for ext in json mbstring; do
         if php -r "if(!extension_loaded('${ext}')) exit(1);" 2>/dev/null; then
             ok "ext-${ext}"
         else
-            fail "Отсутствует расширение ${ext}"
+            fail "Missing extension: ${ext}"
         fi
     done
 
     if php -r "if(!extension_loaded('pdo_pgsql')) exit(1);" 2>/dev/null; then
         ok "ext-pdo_pgsql"
     else
-        warn "ext-pdo_pgsql не найден (нужен только для модуля БД)"
+        warn "ext-pdo_pgsql not found (only needed for the database module)"
     fi
 }
 
 phase_create_user() {
-    echo -e "\n${BOLD}[2/7] Системный пользователь${NC}"
+    echo -e "\n${BOLD}[2/7] System user${NC}"
     if ! id "${SERVICE_USER}" &>/dev/null; then
         useradd -r -s /usr/sbin/nologin -d "${INSTALL_DIR}" "${SERVICE_USER}"
-        ok "Пользователь '${SERVICE_USER}' создан"
+        ok "User '${SERVICE_USER}' created"
     else
-        ok "Пользователь '${SERVICE_USER}' уже существует"
+        ok "User '${SERVICE_USER}' already exists"
     fi
 
     if getent group adm &>/dev/null; then
         usermod -aG adm "${SERVICE_USER}" 2>/dev/null || true
-        ok "'${SERVICE_USER}' добавлен в группу 'adm' (доступ к логам)"
+        ok "'${SERVICE_USER}' added to 'adm' group (log access)"
     fi
 }
 
 phase_directories() {
-    echo -e "\n${BOLD}[3/7] Директории${NC}"
+    echo -e "\n${BOLD}[3/7] Directories${NC}"
     mkdir -p "${INSTALL_DIR}" "${CONFIG_DIR}" "${LOG_DIR}"
     chown "${SERVICE_USER}:${SERVICE_USER}" "${LOG_DIR}"
     chmod 750 "${LOG_DIR}"
@@ -763,35 +937,35 @@ phase_directories() {
 }
 
 phase_copy_files() {
-    echo -e "\n${BOLD}[4/7] Копирование файлов${NC}"
+    echo -e "\n${BOLD}[4/7] Copying files${NC}"
     cp -r "${SCRIPT_DIR}/src" "${INSTALL_DIR}/"
     cp -r "${SCRIPT_DIR}/bin" "${INSTALL_DIR}/"
     cp "${SCRIPT_DIR}/composer.json" "${INSTALL_DIR}/"
     cp "${SCRIPT_DIR}/composer.lock" "${INSTALL_DIR}/" 2>/dev/null || true
     chmod +x "${INSTALL_DIR}/bin/serverlens"
-    ok "Файлы скопированы в ${INSTALL_DIR}"
+    ok "Files copied to ${INSTALL_DIR}"
 }
 
 phase_dependencies() {
-    echo -e "\n${BOLD}[5/7] PHP-зависимости${NC}"
+    echo -e "\n${BOLD}[5/7] PHP dependencies${NC}"
     if ! command -v composer &>/dev/null; then
-        info "Устанавливаю Composer..."
+        info "Installing Composer..."
         curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer 2>/dev/null
     fi
-    ok "Composer найден"
+    ok "Composer found"
     cd "${INSTALL_DIR}"
     composer install --no-dev --optimize-autoloader --no-interaction --quiet
-    ok "Зависимости установлены"
+    ok "Dependencies installed"
 }
 
 phase_wizard() {
-    echo -e "\n${BOLD}[6/7] Мастер настройки${NC}"
+    echo -e "\n${BOLD}[6/7] Setup wizard${NC}"
 
-    echo -e "\n  Сканирование сервисов...\n"
+    echo -e "\n  Scanning services...\n"
     discover_services
 
     if (( ${#FOUND_SERVICES[@]} == 0 )); then
-        warn "Сервисы не обнаружены"
+        warn "No services found"
     else
         local idx=1
         for svc in "${FOUND_SERVICES[@]}"; do
@@ -803,7 +977,7 @@ phase_wizard() {
         done
 
         echo ""
-        local sel; sel=$(ask_input "Какие сервисы мониторить? (all / номера через запятую / Enter — все)" "all")
+        local sel; sel=$(ask_input "Which services to monitor? (all / comma-separated numbers / Enter = all)" "all")
         if [[ "$sel" == "all" ]]; then
             SELECTED_SERVICES=("${FOUND_SERVICES[@]}")
         elif [[ -n "$sel" ]]; then
@@ -815,7 +989,7 @@ phase_wizard() {
         fi
     fi
 
-    if (( ${#SELECTED_SERVICES[@]} > 0 )); then ok "Выбрано: ${SELECTED_SERVICES[*]}"; fi
+    if (( ${#SELECTED_SERVICES[@]} > 0 )); then ok "Selected: ${SELECTED_SERVICES[*]}"; fi
 
     wizard_logs
     fix_log_permissions
@@ -823,17 +997,16 @@ phase_wizard() {
     wizard_system
     generate_config
 
-    # Настройка БД — вызываем отдельный скрипт
     echo ""
-    if ask_yn "Настроить подключение к PostgreSQL?" "y"; then
+    if ask_yn "Configure PostgreSQL connection?" "y"; then
         local db_script="${SCRIPT_DIR}/scripts/setup_db.sh"
         if [[ -f "$db_script" ]]; then
             bash "$db_script"
         else
-            warn "Скрипт ${db_script} не найден, пропускаем"
+            warn "Script ${db_script} not found, skipping"
             echo ""
-            info "Скрипт создаёт read-only пользователя PostgreSQL для мониторинга."
-            info "Выполните позже из директории проекта:"
+            info "This script creates a read-only PostgreSQL user for monitoring."
+            info "Run it later from the project directory:"
             echo ""
             echo "    cd ${SCRIPT_DIR} && sudo bash scripts/setup_db.sh"
             echo ""
@@ -842,21 +1015,21 @@ phase_wizard() {
 }
 
 phase_default_config() {
-    echo -e "\n${BOLD}[6/7] Конфигурация (без визарда)${NC}"
+    echo -e "\n${BOLD}[6/7] Configuration (no wizard)${NC}"
     local cfg="${CONFIG_DIR}/config.yaml"
     if [[ -f "$cfg" ]]; then
-        ok "Конфиг уже существует: ${cfg}"
+        ok "Config already exists: ${cfg}"
     else
         cp "${SCRIPT_DIR}/config.example.yaml" "$cfg"
         chown root:${SERVICE_USER} "$cfg" 2>/dev/null || true
         chmod 640 "$cfg"
-        ok "Скопирован config.example.yaml → ${cfg}"
+        ok "Copied config.example.yaml -> ${cfg}"
         echo ""
-        info "Конфиг содержит шаблонные значения. Проверьте и адаптируйте под сервер:"
+        info "The config contains template values. Review and adapt for your server:"
         echo ""
         echo "    sudo nano ${cfg}"
         echo ""
-        info "Ключевые секции: logs (лог-файлы), configs (конфиги), system (мониторинг)."
+        info "Key sections: logs, configs, system."
     fi
 }
 
@@ -865,110 +1038,96 @@ phase_systemd() {
     if [[ -f "${SCRIPT_DIR}/etc/serverlens.service" ]]; then
         cp "${SCRIPT_DIR}/etc/serverlens.service" /etc/systemd/system/serverlens.service
         systemctl daemon-reload
-        ok "Сервис установлен (не запущен)"
+        ok "Service installed (not started)"
         echo ""
-        info "MCP-клиент запускает ServerLens по SSH автоматически."
-        info "Systemd-сервис нужен только для режима SSE (HTTP). Если нужен:"
+        info "MCP client launches ServerLens via SSH automatically."
+        info "The systemd service is only needed for SSE (HTTP) mode:"
         echo ""
-        echo "    sudo systemctl start serverlens     # запуск"
-        echo "    sudo systemctl enable serverlens    # автозапуск при загрузке"
+        echo "    sudo systemctl start serverlens     # start"
+        echo "    sudo systemctl enable serverlens    # auto-start on boot"
         echo ""
     else
-        warn "serverlens.service не найден, пропуск"
+        warn "serverlens.service not found, skipping"
     fi
 }
 
 phase_summary() {
     echo ""
     echo -e "${BOLD}╔══════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}║         Установка завершена!             ║${NC}"
+    echo -e "${BOLD}║         Installation complete!            ║${NC}"
     echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "  Конфигурация: ${CYAN}${CONFIG_DIR}/config.yaml${NC}"
-    echo -e "  Программа:    ${CYAN}${INSTALL_DIR}/bin/serverlens${NC}"
-    echo -e "  Логи аудита:  ${CYAN}${LOG_DIR}/audit.log${NC}"
+    echo -e "  Configuration: ${CYAN}${CONFIG_DIR}/config.yaml${NC}"
+    echo -e "  Application:   ${CYAN}${INSTALL_DIR}/bin/serverlens${NC}"
+    echo -e "  Audit log:     ${CYAN}${LOG_DIR}/audit.log${NC}"
+
     echo ""
-    echo -e "  ${BOLD}Проверка:${NC}"
+    echo -e "${BOLD}  ═══════════════ Server Setup ═══════════════${NC}"
+
+    echo ""
+    echo -e "  ${BOLD}Step 1.${NC} Grant your SSH user access to ServerLens:"
+    echo ""
+    echo -e "  The SSH user needs the ${CYAN}serverlens${NC} group (to read ServerLens config)"
+    if getent group adm &>/dev/null; then
+        echo -e "  and the ${CYAN}adm${NC} group (standard Ubuntu/Debian group for reading /var/log/)."
+    fi
+    echo -e "  Replace ${CYAN}YOUR_USER${NC} with your SSH username:"
+    echo ""
+    echo "    sudo usermod -aG serverlens YOUR_USER"
+    if getent group adm &>/dev/null; then
+        echo "    sudo usermod -aG adm YOUR_USER"
+    fi
+    echo ""
+    echo -e "  Apply group changes without logging out:"
+    echo ""
+    echo "    newgrp serverlens"
+    echo ""
+
+    echo -e "  ${BOLD}Step 2.${NC} Validate configuration:"
+    echo ""
     echo "    php ${INSTALL_DIR}/bin/serverlens validate-config \\"
     echo "      --config ${CONFIG_DIR}/config.yaml"
     echo ""
-    echo -e "  ${BOLD}Быстрый тест:${NC}"
+
+    echo -e "  ${BOLD}Step 3.${NC} Quick test (Ctrl+C to exit):"
+    echo ""
     echo "    echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1.0\"}}}' | \\"
     echo "      php ${INSTALL_DIR}/bin/serverlens serve --config ${CONFIG_DIR}/config.yaml --stdio"
     echo ""
 
-    # SSH-пользователь и группы
-    echo -e "  ${BOLD}Права SSH-пользователя:${NC}"
-    echo -e "  MCP-клиент подключается по SSH. SSH-пользователь должен быть в нужных группах."
-    echo -e "  Замените ${CYAN}ВАШUSER${NC} на имя SSH-пользователя (тот, под которым заходите на сервер):"
-    echo ""
-    echo "    sudo usermod -aG serverlens ВАШUSER   # доступ к конфигу ServerLens"
-
-    if getent group adm &>/dev/null; then
-        echo "    sudo usermod -aG adm ВАШUSER            # /var/log/ (стандарт Ubuntu/Debian)"
-    fi
-
-    declare -A shown_groups=()
-    if (( ${#SELECTED_SERVICES[@]} > 0 )); then
-        for svc in "${SELECTED_SERVICES[@]}"; do
-            local log_paths=()
-            case "$svc" in
-                nginx)      [[ -d "/var/log/nginx" ]] && log_paths+=("/var/log/nginx") ;;
-                apache2)    [[ -d "/var/log/apache2" ]] && log_paths+=("/var/log/apache2")
-                            [[ -d "/var/log/httpd" ]] && log_paths+=("/var/log/httpd") ;;
-                postgresql) [[ -d "/var/log/postgresql" ]] && log_paths+=("/var/log/postgresql") ;;
-                redis)      [[ -d "/var/log/redis" ]] && log_paths+=("/var/log/redis") ;;
-                rabbitmq)   [[ -d "/var/log/rabbitmq" ]] && log_paths+=("/var/log/rabbitmq") ;;
-                php-fpm)
-                    for f in /var/log/php*-fpm.log; do
-                        [[ -f "$f" ]] && log_paths+=("$f")
-                    done
-                    ;;
-            esac
-            for lpath in "${log_paths[@]}"; do
-                local grp
-                grp=$(stat -c '%G' "$lpath" 2>/dev/null || stat -f '%Sg' "$lpath" 2>/dev/null || echo "")
-                if [[ -n "$grp" && "$grp" != "root" && "$grp" != "adm" && -z "${shown_groups[$grp]:-}" ]]; then
-                    echo "    sudo usermod -aG ${grp} ВАШUSER           # ${lpath}"
-                    shown_groups[$grp]=1
-                elif [[ "$grp" == "root" ]]; then
-                    echo "    # ${lpath} — принадлежит root, права исправлены установщиком"
-                fi
-            done
-        done
-    fi
-    echo ""
-    echo -e "  ${YELLOW}⚠${NC} После usermod нужно перелогиниться (выйти и зайти по SSH заново)"
-    echo ""
-
     local srv_host; srv_host=$(hostname -f 2>/dev/null || hostname)
 
-    echo -e "  ${BOLD}Далее: настройка MCP-клиента (на вашей машине разработчика)${NC}"
+    echo -e "${BOLD}  ════════════ MCP Client Setup ═════════════${NC}"
+    echo -e "  (run these on your ${CYAN}developer machine${NC})"
     echo ""
-    echo -e "  ${BOLD}1.${NC} Клонируйте репозиторий и установите зависимости:"
+
+    echo -e "  ${BOLD}Step 1.${NC} Clone the repository and install dependencies:"
     echo ""
-    echo "    git clone <url-репозитория> ~/serverlens"
+    echo "    git clone <repo-url> ~/serverlens"
     echo "    cd ~/serverlens/mcp-client && composer install"
     echo ""
-    echo -e "  ${BOLD}2.${NC} Создайте конфиг клиента:"
+
+    echo -e "  ${BOLD}Step 2.${NC} Create client config:"
     echo ""
     echo "    mkdir -p ~/.serverlens"
     echo "    cp ~/serverlens/mcp-client/config.example.yaml ~/.serverlens/config.yaml"
     echo ""
-    echo -e "  ${BOLD}3.${NC} Укажите в ${CYAN}~/.serverlens/config.yaml${NC} данные этого сервера:"
+
+    echo -e "  ${BOLD}Step 3.${NC} Edit ${CYAN}~/.serverlens/config.yaml${NC} — add this server:"
     echo ""
     echo "    servers:"
-    echo "      production:              # произвольное имя"
+    echo "      production:              # any name you like"
     echo "        ssh:"
     echo "          host: \"${srv_host}\""
-    echo "          user: \"ВАШUSER\"       # SSH-пользователь"
+    echo "          user: \"YOUR_USER\"       # SSH username"
     echo "          key: \"~/.ssh/id_ed25519\""
     echo "        remote:"
     echo "          php: \"php\""
     echo "          serverlens_path: \"${INSTALL_DIR}/bin/serverlens\""
     echo "          config_path: \"${CONFIG_DIR}/config.yaml\""
     echo ""
-    echo -e "  ${BOLD}4.${NC} Добавьте в ${CYAN}~/.cursor/mcp.json${NC} (на вашей машине):"
+
+    echo -e "  ${BOLD}Step 4.${NC} Add to ${CYAN}~/.cursor/mcp.json${NC} (on your machine):"
     echo ""
     echo "    {"
     echo "      \"mcpServers\": {"
@@ -980,11 +1139,12 @@ phase_summary() {
     echo "      }"
     echo "    }"
     echo ""
-    echo -e "  ${BOLD}5.${NC} Перезапустите Cursor. В Output → MCP должно появиться:"
+
+    echo -e "  ${BOLD}Step 5.${NC} Restart Cursor. In Output -> MCP you should see:"
     echo ""
     echo "    [MCP] Ready: 1 server(s), N remote tool(s), 2 MCP tools"
     echo ""
-    echo -e "  Подробная инструкция: ${CYAN}docs/quickstart.md${NC} (шаги 4–6)"
+    echo -e "  Full guide: ${CYAN}docs/quickstart.md${NC} (steps 4-6)"
     echo ""
 }
 

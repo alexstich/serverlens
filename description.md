@@ -1,28 +1,28 @@
-# ServerLens — Безопасный Read-Only инструмент серверной диагностики
+# ServerLens — Secure read-only server diagnostics tool
 
-## 1. Обзор и цели
+## 1. Overview and goals
 
-**ServerLens** — это защищённый серверный инструмент, предоставляющий read-only доступ к логам, конфигурациям и базам данных сервера. Инструмент работает как MCP-сервер (Model Context Protocol), что позволяет подключаться к нему из Cursor, Claude Desktop или любого MCP-совместимого клиента.
+**ServerLens** is a secure server-side tool that provides read-only access to logs, configuration, and databases. It runs as an MCP (Model Context Protocol) server so you can connect from Cursor, Claude Desktop, or any MCP-compatible client.
 
-### Ключевые принципы
+### Key principles
 
-- **Только чтение** — инструмент физически не может модифицировать данные: ни файлы, ни базы
-- **Абстрактные запросы** — никакого сырого SQL; клиент описывает *что* нужно (таблица, поля, условия), а сервер сам строит безопасный запрос
-- **Whitelist-модель** — доступны только явно разрешённые логи, конфиги, базы и таблицы
-- **Аутентификация уровня SSH** — подключение по ключу или токену с поддержкой ротации
-- **Аудит** — каждый запрос логируется
+- **Read-only** — the tool cannot modify data: neither files nor databases
+- **Abstract queries** — no raw SQL; the client describes *what* is needed (table, fields, conditions), and the server builds a safe query
+- **Whitelist model** — only explicitly allowed logs, configs, databases, and tables are reachable
+- **SSH-level authentication** — key or token auth with rotation support
+- **Audit** — every request is logged
 
 ---
 
-## 2. Архитектура
+## 2. Architecture
 
 ```
-┌──────────────────────────┐         SSH-туннель / mTLS
-│  Компьютер разработчика  │◄────────────────────────────►┌─────────────────────────┐
-│                          │                               │   Сервер                │
+┌──────────────────────────┐         SSH tunnel / mTLS
+│  Developer machine       │◄────────────────────────────►┌─────────────────────────┐
+│                          │                               │   Server                │
 │  Cursor / Claude Desktop │       localhost:9600          │                         │
-│  (MCP-клиент)            │◄──────────────────────────────│   ServerLens            │
-│                          │       stdio / SSE              │   (MCP-сервер)          │
+│  (MCP client)            │◄──────────────────────────────│   ServerLens            │
+│                          │       stdio / SSE              │   (MCP server)          │
 └──────────────────────────┘                               │                         │
                                                            │  ┌───────────────────┐  │
                                                            │  │ Auth Layer        │  │
@@ -45,101 +45,101 @@
                                                            └─────────────────────────┘
 ```
 
-### Варианты транспорта (как подключаться)
+### Transport options (how to connect)
 
-| Вариант | Безопасность | Сложность | Рекомендация |
+| Option | Security | Complexity | Recommendation |
 |---------|-------------|-----------|--------------|
-| **SSH-туннель + stdio** | ★★★★★ | Низкая | **Рекомендуется** |
-| **SSH-туннель + SSE на localhost** | ★★★★★ | Низкая | Альтернатива |
-| **mTLS (клиентские сертификаты)** | ★★★★★ | Средняя | Для корпоративных сценариев |
-| **HTTPS + Bearer token** | ★★★★☆ | Низкая | Только через VPN/Tailscale |
-| **WireGuard/Tailscale + token** | ★★★★★ | Средняя | Для удалённого доступа |
+| **SSH tunnel + stdio** | ★★★★★ | Low | **Recommended** |
+| **SSH tunnel + SSE on localhost** | ★★★★★ | Low | Alternative |
+| **mTLS (client certificates)** | ★★★★★ | Medium | Enterprise scenarios |
+| **HTTPS + Bearer token** | ★★★★☆ | Low | Only via VPN/Tailscale |
+| **WireGuard/Tailscale + token** | ★★★★★ | Medium | Remote access |
 
-#### Рекомендуемый вариант: SSH-туннель
+#### Recommended: SSH tunnel
 
-Самый простой и безопасный подход — ServerLens слушает **только на localhost** (127.0.0.1), а ты пробрасываешь порт через SSH:
+The simplest and safest approach is for ServerLens to listen **only on localhost** (127.0.0.1) while you forward the port over SSH:
 
 ```bash
-# На компьютере разработчика:
+# On the developer machine:
 ssh -L 9600:127.0.0.1:9600 user@server
 
-# Теперь MCP-клиент подключается к localhost:9600
+# The MCP client now connects to localhost:9600
 ```
 
-Преимущества:
-- Порт 9600 НЕ открыт наружу (bind на 127.0.0.1)
-- Аутентификация через SSH-ключи (уже настроена)
-- Шифрование SSH (не нужен свой TLS)
-- Не нужна дополнительная инфраструктура (сертификаты, VPN)
+Benefits:
+- Port 9600 is NOT exposed externally (bind on 127.0.0.1)
+- Authentication via SSH keys (already configured)
+- SSH encryption (no separate TLS required)
+- No extra infrastructure (certificates, VPN)
 
-Поверх SSH-туннеля ServerLens также проверяет **Bearer-токен** — это второй фактор на случай, если кто-то получит SSH-доступ к серверу.
+On top of the SSH tunnel, ServerLens also validates a **Bearer token** — a second factor if someone gains SSH access to the server.
 
 ---
 
-## 3. Аутентификация и безопасность
+## 3. Authentication and security
 
-### 3.1. Двухслойная аутентификация
+### 3.1. Two-layer authentication
 
-**Слой 1: Транспорт (SSH-туннель)**
-- Доступ по SSH-ключу (Ed25519)
-- Отдельный системный пользователь `serverlens` с минимальными правами
-- Опционально: ограничение команд в `authorized_keys`
+**Layer 1: Transport (SSH tunnel)**
+- Access via SSH key (Ed25519)
+- Dedicated system user `serverlens` with minimal privileges
+- Optional: command restrictions in `authorized_keys`
 
-**Слой 2: Приложение (Bearer-токен)**
-- HMAC-SHA256 токен, 256 бит
-- Передаётся в заголовке: `Authorization: Bearer <token>`
-- Хранится хешированным (argon2id) в конфиге сервера
+**Layer 2: Application (Bearer token)**
+- HMAC-SHA256 token, 256 bits
+- Sent in header: `Authorization: Bearer <token>`
+- Stored hashed (argon2id) in the server config
 
-### 3.2. Ротация токенов
+### 3.2. Token rotation
 
 ```yaml
-# Конфигурация ротации
+# Rotation configuration
 auth:
   tokens:
-    - hash: "$argon2id$v=19$m=19456,t=2,p=1$..."   # текущий
+    - hash: "$argon2id$v=19$m=19456,t=2,p=1$..."   # current
       created: "2025-03-01"
-      expires: "2025-06-01"                          # 90 дней
-    - hash: "$argon2id$v=19$m=19456,t=2,p=1$..."   # предыдущий (grace period)
+      expires: "2025-06-01"                          # 90 days
+    - hash: "$argon2id$v=19$m=19456,t=2,p=1$..."   # previous (grace period)
       created: "2024-12-01"
       expires: "2025-04-01"
-  max_active_tokens: 2          # одновременно валидны максимум 2
-  token_lifetime_days: 90       # рекомендуемый срок жизни
+  max_active_tokens: 2          # at most 2 valid at once
+  token_lifetime_days: 90       # recommended lifetime
 ```
 
-Механизм ротации:
-1. Генерация нового токена: `serverlens token generate`
-2. Новый токен добавляется, старый остаётся активным (grace period — 30 дней)
-3. После grace period старый токен автоматически деактивируется
-4. Принудительная отмена: `serverlens token revoke <prefix>`
+Rotation flow:
+1. Generate a new token: `serverlens token generate`
+2. Add the new token; the old one stays active (grace period — 30 days)
+3. After the grace period the old token is deactivated automatically
+4. Force revoke: `serverlens token revoke <prefix>`
 
-### 3.3. Защита от атак
+### 3.3. Attack mitigations
 
-| Угроза | Защита |
+| Threat | Mitigation |
 |--------|--------|
-| Brute-force токена | Rate limiting: 5 попыток/мин, блокировка IP на 15 мин |
-| SQL-инъекция | Нет сырого SQL; параметризованные запросы через ORM |
-| Path traversal (логи) | Whitelist абсолютных путей; realpath-проверка |
-| Информация об ошибках | Унифицированные ошибки; детали только в серверном логе |
-| Сканирование снаружи | Bind на 127.0.0.1; порт не доступен извне |
-| Объём данных | Лимит строк на запрос (default 1000); пагинация |
-| DoS | Rate limiting: 60 запросов/мин на клиента |
+| Token brute-force | Rate limiting: 5 attempts/min, IP block for 15 min |
+| SQL injection | No raw SQL; parameterized queries via ORM |
+| Path traversal (logs) | Whitelist of absolute paths; realpath checks |
+| Error information leakage | Uniform errors; details only in server log |
+| External scanning | Bind on 127.0.0.1; port not reachable from outside |
+| Data volume | Row limit per request (default 1000); pagination |
+| DoS | Rate limiting: 60 requests/min per client |
 
 ---
 
-## 4. Модули
+## 4. Modules
 
-### 4.1. LogReader — Чтение логов
+### 4.1. LogReader — Reading logs
 
-Доступ к файлам логов с whitelist-контролем.
+Access to log files with whitelist control.
 
-**Конфигурация:**
+**Configuration:**
 ```yaml
 logs:
   sources:
     - name: "nginx_access"
       path: "/var/log/nginx/access.log"
-      format: "nginx_combined"      # парсер формата
-      max_lines: 5000               # максимум строк за запрос
+      format: "nginx_combined"      # format parser
+      max_lines: 5000               # max lines per request
       
     - name: "nginx_error"
       path: "/var/log/nginx/error.log"
@@ -148,11 +148,11 @@ logs:
       
     - name: "speak_y_api"
       path: "/var/log/speak-y/api.log"
-      format: "json"                # структурированные логи
+      format: "json"                # structured logs
       max_lines: 3000
       
-    - name: "servicebook_api"
-      path: "/var/log/servicebook/api.log"
+    - name: "webapp_api"
+      path: "/var/log/webapp/api.log"
       format: "json"
       max_lines: 3000
       
@@ -167,19 +167,19 @@ logs:
       max_lines: 3000
 ```
 
-Кроме одиночного файла в `path`, для логов поддерживается **`type: "directory"`**: источник может указывать на каталог с glob-шаблоном; файлы подбираются автоматически, в списке и в параметре `source` они фигурируют как `имя_каталога/имя_файла`.
+Besides a single file in `path`, logs support **`type: "directory"`**: a source can point at a directory with a glob pattern; files are picked automatically and appear in listings and the `source` parameter as `directory_name/file_name`.
 
-**MCP-инструменты (tools):**
+**MCP tools:**
 
-| Tool | Описание | Параметры |
+| Tool | Description | Parameters |
 |------|----------|-----------|
-| `logs_list` | Список доступных логов | — |
-| `logs_tail` | Последние N строк | `source`, `lines` (max 500) |
-| `logs_search` | Поиск по подстроке/regex | `source`, `query`, `regex: bool`, `lines` (max 1000) |
-| `logs_count` | Количество строк / размер файла | `source` |
-| `logs_time_range` | Записи за период | `source`, `from`, `to`, `lines` |
+| `logs_list` | List available logs | — |
+| `logs_tail` | Last N lines | `source`, `lines` (max 500) |
+| `logs_search` | Search by substring/regex | `source`, `query`, `regex: bool`, `lines` (max 1000) |
+| `logs_count` | Line count / file size | `source` |
+| `logs_time_range` | Records in a time range | `source`, `from`, `to`, `lines` |
 
-**Пример запроса (как это выглядит для MCP-клиента):**
+**Example request (as seen by the MCP client):**
 ```json
 {
   "tool": "logs_search",
@@ -191,20 +191,20 @@ logs:
 }
 ```
 
-**Безопасность LogReader:**
-- Путь к файлу берётся ТОЛЬКО из конфигурации (не от клиента)
-- `realpath()` проверка — даже если в конфиге симлинк, проверяем, что resolved path не выходит за пределы разрешённых директорий
-- Файл открывается в read-only режиме
-- Лимит строк жёстко ограничен конфигурацией
-- Regex-запросы имеют таймаут (5 сек) и ограничение сложности
+**LogReader security:**
+- File path comes ONLY from configuration (not from the client)
+- `realpath()` check — even if the config has a symlink, the resolved path must stay within allowed directories
+- File opened read-only
+- Line limit enforced by configuration
+- Regex queries have a timeout (5 sec) and complexity limits
 
 ---
 
-### 4.2. ConfigReader — Чтение конфигов
+### 4.2. ConfigReader — Reading configs
 
-Доступ к конфигурационным файлам (или их безопасным фрагментам).
+Access to configuration files (or safe fragments).
 
-**Конфигурация:**
+**Configuration:**
 ```yaml
 configs:
   sources:
@@ -213,11 +213,11 @@ configs:
       
     - name: "nginx_sites"
       path: "/etc/nginx/sites-enabled/"
-      type: "directory"                    # все файлы в директории
+      type: "directory"                    # all files in the directory
       
     - name: "postgres_main"
       path: "/etc/postgresql/16/main/postgresql.conf"
-      redact:                              # скрыть чувствительные параметры
+      redact:                              # hide sensitive parameters
         - "password"
         - "ssl_key_file"
         - "ssl_cert_file"
@@ -237,27 +237,27 @@ configs:
         - "default_pass"
 ```
 
-**MCP-инструменты:**
+**MCP tools:**
 
-| Tool | Описание | Параметры |
+| Tool | Description | Parameters |
 |------|----------|-----------|
-| `config_list` | Список доступных конфигов | — |
-| `config_read` | Содержимое конфига | `source` |
-| `config_search` | Поиск по конфигу | `source`, `query` |
+| `config_list` | List available configs | — |
+| `config_read` | Config contents | `source` |
+| `config_search` | Search within config | `source`, `query` |
 
-**Безопасность ConfigReader:**
-- Whitelist путей (как в LogReader)
-- **Автоматическая редакция (redaction)** — пароли, токены, ключи заменяются на `[REDACTED]`
-- Встроенные regex-паттерны для типичных секретов (пароли, API-ключи, connection strings)
-- Файлы открываются в read-only
+**ConfigReader security:**
+- Whitelist paths (as in LogReader)
+- **Automatic redaction** — passwords, tokens, keys replaced with `[REDACTED]`
+- Built-in regex patterns for typical secrets (passwords, API keys, connection strings)
+- Files opened read-only
 
 ---
 
-### 4.3. DBQuery — Безопасные запросы к базам данных
+### 4.3. DBQuery — Safe database queries
 
-Абстрактный интерфейс для чтения данных из PostgreSQL без прямого SQL.
+Abstract interface for reading PostgreSQL data without raw SQL.
 
-**Конфигурация:**
+**Configuration:**
 ```yaml
 databases:
   connections:
@@ -265,14 +265,14 @@ databases:
       host: "localhost"
       port: 5432
       database: "speaky_production"
-      user: "serverlens_readonly"         # специальный read-only пользователь
-      password_env: "SL_DB_SPEAKY_PASS"   # пароль из переменной окружения
+      user: "serverlens_readonly"         # dedicated read-only user
+      password_env: "SL_DB_SPEAKY_PASS"   # password from environment variable
       
-      # Whitelist таблиц и полей
+      # Whitelist tables and fields
       tables:
         - name: "users"
           allowed_fields: ["id", "email", "created_at", "is_active", "plan"]
-          # Исключённые поля (даже если allowed_fields = "*"):
+          # Excluded fields (even if allowed_fields = "*"):
           denied_fields: ["password_hash", "api_key", "reset_token"]
           max_rows: 500
           allowed_filters: ["id", "email", "is_active", "created_at", "plan"]
@@ -280,7 +280,7 @@ databases:
           
         - name: "transcriptions"
           allowed_fields: ["id", "user_id", "language", "duration", "provider", "status", "created_at"]
-          denied_fields: ["raw_text", "audio_path"]    # содержимое транскрипций — приватное
+          denied_fields: ["raw_text", "audio_path"]    # transcription content is private
           max_rows: 1000
           allowed_filters: ["user_id", "language", "provider", "status", "created_at"]
           allowed_order_by: ["id", "created_at", "duration"]
@@ -292,12 +292,12 @@ databases:
           allowed_filters: ["endpoint", "method", "status_code", "created_at"]
           allowed_order_by: ["id", "created_at", "response_time_ms"]
 
-    - name: "servicebook_prod"
+    - name: "myapp_prod"
       host: "localhost"
       port: 5432
-      database: "servicebook_production"
+      database: "myapp_production"
       user: "serverlens_readonly"
-      password_env: "SL_DB_SERVICEBOOK_PASS"
+      password_env: "SL_DB_MYAPP_PASS"
       
       tables:
         - name: "service_requests"
@@ -308,22 +308,22 @@ databases:
           allowed_order_by: ["id", "created_at", "priority"]
           
         - name: "categories"
-          allowed_fields: "*"              # все поля разрешены
+          allowed_fields: "*"              # all fields allowed
           denied_fields: []
           max_rows: 500
 ```
 
-**MCP-инструменты:**
+**MCP tools:**
 
-| Tool | Описание | Параметры |
+| Tool | Description | Parameters |
 |------|----------|-----------|
-| `db_list` | Список баз и таблиц | — |
-| `db_describe` | Структура таблицы (разрешённые поля) | `database`, `table` |
-| `db_query` | Выборка записей | `database`, `table`, `fields`, `filters`, `order_by`, `limit`, `offset` |
-| `db_count` | Количество записей | `database`, `table`, `filters` |
-| `db_stats` | Базовая статистика по полю | `database`, `table`, `field` (COUNT, MIN, MAX, AVG для числовых) |
+| `db_list` | List databases and tables | — |
+| `db_describe` | Table structure (allowed fields) | `database`, `table` |
+| `db_query` | Select rows | `database`, `table`, `fields`, `filters`, `order_by`, `limit`, `offset` |
+| `db_count` | Row count | `database`, `table`, `filters` |
+| `db_stats` | Basic field statistics | `database`, `table`, `field` (COUNT, MIN, MAX, AVG for numeric types) |
 
-**Формат запроса (абстрактный, не SQL):**
+**Request format (abstract, not SQL):**
 ```json
 {
   "tool": "db_query",
@@ -343,61 +343,61 @@ databases:
 }
 ```
 
-**Поддерживаемые операторы фильтрации:**
-- `eq` — равно
-- `neq` — не равно
-- `gt`, `gte`, `lt`, `lte` — сравнение
-- `in` — входит в список (максимум 50 значений)
-- `like` — LIKE с автоматическим экранированием (только `%` в начале/конце)
+**Supported filter operators:**
+- `eq` — equals
+- `neq` — not equals
+- `gt`, `gte`, `lt`, `lte` — comparisons
+- `in` — in list (max 50 values)
+- `like` — LIKE with automatic escaping (only `%` at start/end)
 - `is_null` — IS NULL / IS NOT NULL
 
-**Безопасность DBQuery (КРИТИЧНО):**
+**DBQuery security (CRITICAL):**
 
-1. **Отдельный пользователь PostgreSQL:**
+1. **Dedicated PostgreSQL user:**
 ```sql
--- Создаётся один раз при установке
+-- Created once during installation
 CREATE USER serverlens_readonly WITH PASSWORD '...';
--- ТОЛЬКО SELECT, НИКАКИХ других привилегий
+-- SELECT ONLY, no other privileges
 GRANT CONNECT ON DATABASE speaky_production TO serverlens_readonly;
 GRANT USAGE ON SCHEMA public TO serverlens_readonly;
--- Выдаём SELECT только на конкретные таблицы
+-- Grant SELECT only on specific tables
 GRANT SELECT ON users, transcriptions, api_requests TO serverlens_readonly;
--- Явный запрет на всё остальное
+-- Explicit read-only default
 ALTER USER serverlens_readonly SET default_transaction_read_only = on;
 ```
 
-2. **Построение запросов:**
-   - Клиент передаёт структурированный JSON, НЕ SQL-строку
-   - Сервер строит SQL через query builder (SQLAlchemy Core)
-   - Все значения передаются как **параметры** (prepared statements)
-   - Имена таблиц и полей проверяются по whitelist (строковая подстановка только из разрешённого набора)
-   - **Нет** UNION, JOIN, подзапросов, функций, raw expressions
+2. **Query construction:**
+   - Client sends structured JSON, NOT a SQL string
+   - Server builds SQL via a query builder (SQLAlchemy Core)
+   - All values are **parameters** (prepared statements)
+   - Table and column names validated against whitelist (string interpolation only from the allowed set)
+   - **No** UNION, JOIN, subqueries, functions, or raw expressions
 
-3. **Валидация:**
-   - Проверка: таблица в whitelist?
-   - Проверка: все запрошенные поля в `allowed_fields` и не в `denied_fields`?
-   - Проверка: все поля фильтров в `allowed_filters`?
-   - Проверка: order_by в `allowed_order_by`?
-   - Проверка: limit ≤ max_rows таблицы?
-   - Проверка: значения фильтров — скалярные типы (str, int, float, bool, date)?
-   - **Любая** проверка не прошла → отказ с кодом ошибки (без деталей о структуре)
+3. **Validation:**
+   - Table in whitelist?
+   - All requested fields in `allowed_fields` and not in `denied_fields`?
+   - All filter fields in `allowed_filters`?
+   - `order_by` in `allowed_order_by`?
+   - `limit` ≤ table `max_rows`?
+   - Filter values are scalar types (str, int, float, bool, date)?
+   - **Any** check fails → error response (no structural details leaked)
 
 ---
 
-### 4.4. SystemInfo — Системная информация (опционально)
+### 4.4. SystemInfo — System information (optional)
 
-Базовая информация о состоянии сервера.
+Basic server state information.
 
-**MCP-инструменты:**
+**MCP tools:**
 
-| Tool | Описание |
+| Tool | Description |
 |------|----------|
 | `system_overview` | CPU, RAM, disk usage, uptime |
-| `system_services` | Статус systemd-сервисов (из whitelist) |
-| `system_docker` | Статус Docker-контейнеров (из whitelist) |
-| `system_connections` | Количество активных соединений (PostgreSQL, RabbitMQ) |
+| `system_services` | systemd service status (from whitelist) |
+| `system_docker` | Docker container status (from whitelist) |
+| `system_connections` | Active connection counts (PostgreSQL, RabbitMQ) |
 
-**Конфигурация:**
+**Configuration:**
 ```yaml
 system:
   enabled: true
@@ -406,17 +406,17 @@ system:
     - "postgresql"
     - "rabbitmq-server"
     - "speak-y-api"
-    - "servicebook-api"
+    - "myapp-api"
   allowed_docker_stacks:
     - "speak-y"
-    - "servicebook"
+    - "webapp"
 ```
 
 ---
 
-## 5. Конфигурация
+## 5. Configuration
 
-Единый файл конфигурации: `/etc/serverlens/config.yaml`
+Single configuration file: `/etc/serverlens/config.yaml`
 
 ```yaml
 # ═══════════════════════════════════════════
@@ -424,9 +424,9 @@ system:
 # ═══════════════════════════════════════════
 
 server:
-  host: "127.0.0.1"            # ТОЛЬКО localhost!
+  host: "127.0.0.1"            # localhost ONLY!
   port: 9600
-  transport: "sse"             # "sse" или "stdio"
+  transport: "sse"             # "sse" or "stdio"
   
 auth:
   tokens:
@@ -443,10 +443,10 @@ rate_limiting:
 audit:
   enabled: true
   path: "/var/log/serverlens/audit.log"
-  log_params: false             # НЕ логировать значения фильтров (приватность)
+  log_params: false             # do NOT log filter values (privacy)
   retention_days: 90
 
-# Секции logs, configs, databases, system — как описано выше
+# Sections logs, configs, databases, system — as described above
 logs:
   sources: [...]
 
@@ -461,7 +461,7 @@ system:
   allowed_services: [...]
 ```
 
-**Права на конфигурацию:**
+**Config file permissions:**
 ```bash
 chown root:serverlens /etc/serverlens/config.yaml
 chmod 640 /etc/serverlens/config.yaml
@@ -469,18 +469,18 @@ chmod 640 /etc/serverlens/config.yaml
 
 ---
 
-## 6. Технологический стек
+## 6. Technology stack
 
-| Компонент | Технология | Почему |
+| Component | Technology | Why |
 |-----------|-----------|--------|
-| Язык | **PHP 8.1+** | Современный PHP, типизация, экосистема Composer |
-| MCP, HTTP/SSE | **ReactPHP** (`react/http`, `react/socket`) | Асинхронный цикл событий для транспорта (SSE, stdio) |
-| Конфигурация | **Symfony YAML** | Парсинг YAML-конфигов |
-| БД | **PDO (PostgreSQL)** | Параметризованные запросы, prepared statements |
-| Хеширование токенов | **`password_hash` (Argon2id)** | Встроенное в PHP |
-| Процесс | **systemd** | Надёжное управление процессом |
+| Language | **PHP 8.1+** | Modern PHP, typing, Composer ecosystem |
+| MCP, HTTP/SSE | **ReactPHP** (`react/http`, `react/socket`) | Event loop for transport (SSE, stdio) |
+| Configuration | **Symfony YAML** | YAML config parsing |
+| DB | **PDO (PostgreSQL)** | Parameterized queries, prepared statements |
+| Token hashing | **`password_hash` (Argon2id)** | Built into PHP |
+| Process | **systemd** | Reliable process management |
 
-### Зависимости (минимальные)
+### Dependencies (minimal)
 ```
 php: >=8.1
 react/http: ^1.9
@@ -491,7 +491,7 @@ ext-pdo_pgsql
 
 ---
 
-## 7. Структура проекта
+## 7. Project layout
 
 ```
 serverlens/
@@ -499,7 +499,7 @@ serverlens/
 ├── description.md
 ├── composer.json
 │
-├── src/                        # Серверная часть (ServerLens)
+├── src/                        # Server (ServerLens)
 │   ├── Application.php
 │   ├── Config.php
 │   ├── Mcp/
@@ -527,7 +527,7 @@ serverlens/
 ├── bin/serverlens
 ├── config.example.yaml
 │
-├── mcp-client/                 # MCP-прокси (dispatch model, 2 tools)
+├── mcp-client/                 # MCP proxy (dispatch model, 2 tools)
 │   ├── src/
 │   │   ├── Config.php
 │   │   ├── SshConnection.php
@@ -547,53 +547,53 @@ serverlens/
 
 ---
 
-## 8. Протокол взаимодействия (MCP)
+## 8. Interaction protocol (MCP)
 
-### Регистрация инструментов
+### Tool registration
 
-ServerLens регистрирует следующие MCP tools при подключении:
+ServerLens registers the following MCP tools on connect:
 
 ```
-logs_list          — Список доступных источников логов
-logs_tail          — Последние N строк из лога
-logs_search        — Поиск по логу (текст или regex)
-logs_count         — Размер/количество строк лога
-logs_time_range    — Записи за временной период
+logs_list          — List available log sources
+logs_tail          — Last N lines from a log
+logs_search        — Search a log (text or regex)
+logs_count         — Log size / line count
+logs_time_range    — Records in a time range
 
-config_list        — Список доступных конфигов
-config_read        — Чтение конфига (с редакцией секретов)
-config_search      — Поиск по конфигу
+config_list        — List available configs
+config_read        — Read config (with secret redaction)
+config_search      — Search within config
 
-db_list            — Список баз, таблиц и доступных полей
-db_describe        — Описание таблицы
-db_query           — Выборка записей (абстрактный запрос)
-db_count           — Количество записей
-db_stats           — Статистика по полю
+db_list            — List databases, tables, and allowed fields
+db_describe        — Table description
+db_query           — Select rows (abstract query)
+db_count           — Row count
+db_stats           — Field statistics
 
 system_overview    — CPU, RAM, Disk, Uptime
-system_services    — Статус systemd-сервисов
-system_docker      — Статус Docker-контейнеров
-system_connections — Активные соединения БД
+system_services    — systemd service status
+system_docker      — Docker container status
+system_connections — Active DB connections
 ```
 
-### Пример сессии (как это выглядит в Cursor/Claude)
+### Example session (as in Cursor/Claude)
 
-**Разработчик спрашивает:** *«Покажи последние ошибки nginx за сегодня»*
+**Developer asks:** *“Show the latest nginx errors for today”*
 
-Claude/Cursor вызывает:
+Claude/Cursor calls:
 ```json
 {"tool": "logs_search", "params": {"source": "nginx_error", "query": "error", "lines": 50}}
 ```
 
 ServerLens:
-1. Проверяет токен ✓
-2. Проверяет rate limit ✓
-3. Проверяет что "nginx_error" в whitelist ✓
-4. Читает файл, фильтрует, ограничивает строки
-5. Записывает в аудит-лог
-6. Возвращает результат
+1. Validates token ✓
+2. Checks rate limit ✓
+3. Ensures "nginx_error" is whitelisted ✓
+4. Reads file, filters, caps lines
+5. Writes audit log
+6. Returns result
 
-**Разработчик:** *«Сколько транскрипций было за март со статусом completed?»*
+**Developer:** *“How many transcriptions in March with status completed?”*
 
 Claude/Cursor:
 ```json
@@ -602,42 +602,42 @@ Claude/Cursor:
 
 ---
 
-## 9. Процесс установки
+## 9. Installation steps
 
-### Шаг 1: Создание системного пользователя
+### Step 1: Create system user
 ```bash
 sudo useradd -r -s /usr/sbin/nologin -d /opt/serverlens serverlens
 ```
 
-### Шаг 2: Создание read-only пользователя PostgreSQL
+### Step 2: Create read-only PostgreSQL user
 ```sql
-CREATE USER serverlens_readonly WITH PASSWORD 'сгенерировать_надёжный_пароль';
+CREATE USER serverlens_readonly WITH PASSWORD 'generate_a_strong_password';
 ALTER USER serverlens_readonly SET default_transaction_read_only = on;
 
--- Для каждой базы:
+-- For each database:
 \c speaky_production
 GRANT CONNECT ON DATABASE speaky_production TO serverlens_readonly;
 GRANT USAGE ON SCHEMA public TO serverlens_readonly;
 GRANT SELECT ON users, transcriptions, api_requests TO serverlens_readonly;
 ```
 
-### Шаг 3: Настройка конфигурации
+### Step 3: Configure
 ```bash
 sudo mkdir -p /etc/serverlens
 sudo cp config.example.yaml /etc/serverlens/config.yaml
 sudo chown root:serverlens /etc/serverlens/config.yaml
 sudo chmod 640 /etc/serverlens/config.yaml
-# Редактируем конфигурацию...
+# Edit configuration...
 ```
 
-### Шаг 4: Генерация токена
+### Step 4: Generate token
 ```bash
 serverlens token generate
-# Выведет: Token: sl_a1b2c3d4e5f6... (сохрани!)
-# Хеш автоматически добавится в config.yaml
+# Prints: Token: sl_a1b2c3d4e5f6... (save it!)
+# Hash is appended to config.yaml automatically
 ```
 
-### Шаг 5: Systemd-юнит
+### Step 5: Systemd unit
 ```ini
 [Unit]
 Description=ServerLens MCP Server
@@ -651,7 +651,7 @@ ExecStart=/opt/serverlens/venv/bin/python -m serverlens --config /etc/serverlens
 Restart=on-failure
 RestartSec=5
 
-# Дополнительная защита через systemd
+# Extra hardening via systemd
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -667,11 +667,11 @@ EnvironmentFile=/etc/serverlens/env
 WantedBy=multi-user.target
 ```
 
-### Шаг 6: Подключение с компьютера разработчика
+### Step 6: Connect from the developer machine
 
-Рекомендуемый способ — **локальный MCP-прокси** (`mcp-client/`): Cursor подключается по **stdio** к `serverlens-mcp`, а прокси сам устанавливает **SSH** к удалённому ServerLens (прямое подключение Cursor к SSE на сервере больше не является основным сценарием).
+Recommended path — **local MCP proxy** (`mcp-client/`): Cursor connects over **stdio** to `serverlens-mcp`, and the proxy opens **SSH** to remote ServerLens (direct Cursor-to-SSE on the server is no longer the primary flow).
 
-После настройки `~/.serverlens/config.yaml` (SSH, пути к PHP и `serverlens` на сервере) добавь в Cursor файл `~/.cursor/mcp.json`:
+After configuring `~/.serverlens/config.yaml` (SSH, paths to PHP and `serverlens` on the server), add to Cursor `~/.cursor/mcp.json`:
 
 ```json
 {
@@ -679,22 +679,22 @@ WantedBy=multi-user.target
     "serverlens": {
       "command": "php",
       "args": [
-        "/абсолютный/путь/к/serverlens/mcp-client/bin/serverlens-mcp",
+        "/absolute/path/to/serverlens/mcp-client/bin/serverlens-mcp",
         "--config",
-        "/абсолютный/путь/к/.serverlens/config.yaml"
+        "/absolute/path/to/.serverlens/config.yaml"
       ]
     }
   }
 }
 ```
 
-Пути к бинарнику прокси и к конфигу должны быть **абсолютными**. Отдельный SSH port-forward на порт ServerLens для MCP-клиента не требуется — туннель строит сам прокси.
+Paths to the proxy binary and config must be **absolute**. A separate SSH port-forward to ServerLens for the MCP client is not required — the proxy builds the tunnel itself.
 
 ---
 
-## 10. Аудит-логирование
+## 10. Audit logging
 
-Каждый запрос записывается:
+Every request is recorded:
 
 ```json
 {
@@ -716,72 +716,72 @@ WantedBy=multi-user.target
 }
 ```
 
-**Важно:** Значения фильтров НЕ логируются по умолчанию (приватность). Логируются только метаданные: какой инструмент, какая таблица, сколько строк.
+**Important:** Filter values are NOT logged by default (privacy). Only metadata is logged: which tool, which table, how many rows.
 
 ---
 
-## 11. Ограничения и границы
+## 11. Limitations and boundaries
 
-### Что ServerLens НЕ делает:
-- ❌ Не модифицирует файлы, конфиги или базы
-- ❌ Не выполняет произвольные shell-команды
-- ❌ Не поддерживает JOIN, UNION, подзапросы
-- ❌ Не показывает пароли, токены, ключи (автоматическая редакция)
-- ❌ Не принимает сырой SQL
-- ❌ Не открывает порты наружу
-- ❌ Не даёт доступ к файлам вне whitelist
+### What ServerLens does NOT do:
+- ❌ Does not modify files, configs, or databases
+- ❌ Does not run arbitrary shell commands
+- ❌ Does not support JOIN, UNION, or subqueries
+- ❌ Does not expose passwords, tokens, or keys (automatic redaction)
+- ❌ Does not accept raw SQL
+- ❌ Does not expose ports externally
+- ❌ Does not grant access to files outside the whitelist
 
-### Ограничения по дизайну:
-- Максимум 1000 строк из БД за запрос (настраивается per-table)
-- Максимум 5000 строк из лога за запрос
-- Rate limit: 60 запросов/мин
-- Regex в логах: таймаут 5 сек
-- Токен экспирится через 90 дней
-- Один конфигурационный файл — источник истины
+### Design limits:
+- Up to 1000 DB rows per request (configurable per table)
+- Up to 5000 log lines per request
+- Rate limit: 60 requests/min
+- Log regex: 5 sec timeout
+- Token expires after 90 days
+- Single configuration file — source of truth
 
 ---
 
-## 12. Дорожная карта реализации
+## 12. Implementation roadmap
 
-### Фаза 1 — MVP (1-2 дня)
-- [x] Скелет MCP-сервера на FastMCP
-- [x] Аутентификация по Bearer-токену
+### Phase 1 — MVP (1–2 days)
+- [x] MCP server skeleton on FastMCP
+- [x] Bearer token authentication
 - [x] LogReader (logs_list, logs_tail, logs_search)
-- [x] Конфигурация (Pydantic)
-- [x] Systemd-юнит
+- [x] Configuration (Pydantic)
+- [x] Systemd unit
 
-### Фаза 2 — База данных (1-2 дня)
-- [x] DBQuery со всеми инструментами
-- [x] Валидатор запросов (whitelist полей, фильтры)
-- [x] Read-only пользователь PostgreSQL
-- [x] Пагинация
+### Phase 2 — Database (1–2 days)
+- [x] DBQuery with all tools
+- [x] Request validator (whitelist fields, filters)
+- [x] Read-only PostgreSQL user
+- [x] Pagination
 
-### Фаза 3 — Конфиги и система (0.5 дня)
-- [x] ConfigReader с автоматической редакцией секретов
+### Phase 3 — Configs and system (0.5 day)
+- [x] ConfigReader with automatic secret redaction
 - [x] SystemInfo
 
-### Фаза 4 — Hardening (0.5-1 день)
+### Phase 4 — Hardening (0.5–1 day)
 - [x] Rate limiting
-- [x] Аудит-логирование
-- [x] CLI для управления токенами
-- [x] Тесты безопасности
+- [x] Audit logging
+- [x] CLI for token management
+- [x] Security tests
 - [x] Systemd hardening (sandbox)
 
-**Общая оценка: 3-5 дней до production-ready.**
+**Overall estimate: 3–5 days to production-ready.**
 
 ---
 
-## 13. Альтернативы и почему MCP
+## 13. Alternatives and why MCP
 
-| Подход | Плюсы | Минусы |
+| Approach | Pros | Cons |
 |--------|-------|--------|
-| **MCP-сервер (выбран)** | Нативная интеграция с Cursor/Claude; структурированные инструменты; готовый протокол | Относительно новый стандарт |
-| REST API + Swagger | Знакомый подход; любой HTTP-клиент | Нужен отдельный клиент; нет интеграции с AI |
-| SSH + скрипты | Максимальная простота | Нет структуры; каждый раз вручную |
-| Grafana + Loki | Мощная визуализация | Тяжёлая инфраструктура; overkill для задачи |
+| **MCP server (chosen)** | Native Cursor/Claude integration; structured tools; standard protocol | Relatively new standard |
+| REST API + Swagger | Familiar; any HTTP client | Separate client; no AI integration |
+| SSH + scripts | Maximum simplicity | Unstructured; manual each time |
+| Grafana + Loki | Powerful visualization | Heavy infrastructure; overkill |
 
-MCP — оптимальный выбор, потому что:
-1. Ты уже работаешь с MCP-серверами в Cursor
-2. AI-ассистент сам выбирает нужный инструмент по контексту запроса
-3. Структурированные ответы (не нужно парсить текст)
-4. Стандартный протокол с растущей экосистемой
+MCP is a good fit because:
+1. You already use MCP servers in Cursor
+2. The AI assistant picks the right tool from context
+3. Structured responses (no text parsing)
+4. Standard protocol with a growing ecosystem

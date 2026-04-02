@@ -1,61 +1,61 @@
-# ServerLens — Полная установка от нуля
+# ServerLens — Full installation from scratch
 
-Этот документ описывает **пошаговую** установку системы целиком: от сервера до работающего MCP в Cursor.
+This document describes a **step-by-step** installation of the whole stack: from the server to a working MCP in Cursor.
 
 ```
-Шаг 1–3: НА УДАЛЁННОМ СЕРВЕРЕ
-Шаг 4–6: НА ТВОЕЙ МАШИНЕ (разработчика)
+Steps 1–3: ON THE REMOTE SERVER
+Steps 4–6: ON YOUR MACHINE (developer)
 ```
 
 ---
 
-## Шаг 1. Клонировать репозиторий на сервер
+## Step 1. Clone the repository on the server
 
-Заходим на сервер по SSH и клонируем:
+SSH into the server and clone:
 
 ```bash
-ssh alex@1.2.3.4
+ssh user@1.2.3.4
 
-git clone git@gitlab.rucode.org:devtools/serverlens.git ~/serverlens-src
+git clone git@github.com:your-org/serverlens.git ~/serverlens-src
 cd ~/serverlens-src
 ```
 
-> `/opt` принадлежит root, поэтому клонируем в домашнюю директорию. Скрипт установки сам скопирует нужные файлы в `/opt/serverlens`.
+> `/opt` is owned by root, so clone into your home directory. The install script copies the required files into `/opt/serverlens`.
 
 ---
 
-## Шаг 2. Установить и настроить ServerLens
+## Step 2. Install and configure ServerLens
 
-**Вариант A — интерактивный установщик (рекомендуется):**
+**Option A — interactive installer (recommended):**
 
 ```bash
 sudo bash scripts/install.sh
 ```
 
-Установщик сделает всё за один проход:
-1. Проверит PHP (версию и расширения)
-2. Создаст системного пользователя `serverlens` и директории
-3. Установит зависимости (Composer)
-4. **Запустит мастер настройки:**
-   - Просканирует установленные сервисы (nginx, PostgreSQL, Redis, PHP-FPM, Docker...)
-   - Покажет найденные лог-файлы и конфиги — вы выберете нужные
-   - Предложит настроить подключение к PostgreSQL — выбрать БД, таблицы, колонки
-   - Автоматически определит чувствительные колонки (пароли, токены) и скроет их
-   - Создаст read-only пользователя PostgreSQL
-   - **Сгенерирует готовый `config.yaml`**
-5. Установит systemd-сервис
+The installer does everything in one pass:
+1. Checks PHP (version and extensions)
+2. Creates the `serverlens` system user and directories
+3. Installs dependencies (Composer)
+4. **Runs the setup wizard:**
+   - Scans installed services (nginx, PostgreSQL, Redis, PHP-FPM, Docker…)
+   - Shows discovered log files and configs — you pick what you need
+   - Offers PostgreSQL setup — choose database, tables, columns
+   - Automatically detects sensitive columns (passwords, tokens) and hides them
+   - Creates a read-only PostgreSQL user
+   - **Generates a ready-to-use `config.yaml`**
+5. Installs the systemd service
 
-> После установки конфиг почти не нужно редактировать вручную — визард покрывает все основные настройки.
+> After installation you rarely need to edit the config by hand — the wizard covers the main settings.
 
-**Вариант A без визарда** (для автоматизации / CI):
+**Option A without the wizard** (for automation / CI):
 
 ```bash
 sudo bash scripts/install.sh --no-wizard
 ```
 
-Установит всё, но скопирует `config.example.yaml` без интерактива. Конфиг нужно будет заполнить вручную.
+Installs everything but copies `config.example.yaml` without interaction. You must fill the config manually.
 
-**Вариант B — полностью вручную:**
+**Option B — fully manual:**
 
 ```bash
 sudo mkdir -p /opt/serverlens /etc/serverlens /var/log/serverlens
@@ -63,151 +63,151 @@ sudo cp -r src/ bin/ composer.json /opt/serverlens/
 cd /opt/serverlens && sudo composer install --no-dev --optimize-autoloader
 sudo chmod +x /opt/serverlens/bin/serverlens
 sudo cp ~/serverlens-src/config.example.yaml /etc/serverlens/config.yaml
-sudo nano /etc/serverlens/config.yaml   # заполнить вручную
+sudo nano /etc/serverlens/config.yaml   # fill in manually
 ```
 
-**Отдельная настройка PostgreSQL** (можно запустить позже повторно):
+**Separate PostgreSQL setup** (can be run again later):
 
 ```bash
 sudo bash scripts/setup_db.sh
 ```
 
-Скрипт подключится к PostgreSQL, покажет базы/таблицы/колонки, создаст read-only пользователя и обновит секцию `databases` в `config.yaml`.
+The script connects to PostgreSQL, shows databases/tables/columns, creates a read-only user, and updates the `databases` section in `config.yaml`.
 
-**Права доступа для SSH-пользователя** — MCP-клиент подключается по SSH от имени обычного пользователя (например `rucode`). Этот пользователь должен:
-1. Читать конфиг ServerLens (`/etc/serverlens/config.yaml`)
-2. Читать лог-файлы, указанные в конфиге
+**SSH user permissions** — the MCP client connects over SSH as a normal user (for example `deploy`). That user must:
+1. Read the ServerLens config (`/etc/serverlens/config.yaml`)
+2. Read the log files listed in the config
 
-Для этого SSH-пользователя нужно добавить в группу `serverlens` и в группы, владеющие логами.
+Add that SSH user to the `serverlens` group and to groups that own the logs.
 
-> **Установщик (`install.sh`) автоматически:**
-> - добавляет системного пользователя `serverlens` в группу `adm` (если она есть)
-> - исправляет права на PHP-FPM логи (добавляет group read)
-> - исправляет права на RabbitMQ логи (добавляет group read)
+> **The installer (`install.sh`) automatically:**
+> - adds the `serverlens` system user to `adm` (if it exists)
+> - fixes permissions on PHP-FPM logs (adds group read)
+> - fixes permissions on RabbitMQ logs (adds group read)
 >
-> Но SSH-пользователя нужно добавить в группы **вручную** (установщик покажет нужные команды).
+> You must add the **SSH user to groups manually** (the installer prints the commands).
 
-Каждый сервис хранит логи с собственной группой-владельцем. SSH-пользователя нужно добавить в группу, которой принадлежат логи:
+Each service keeps logs with its own owning group. Add the SSH user to the group that owns the logs:
 
 ```bash
-sudo usermod -aG serverlens rucode     # доступ к конфигу ServerLens
+sudo usermod -aG serverlens deploy     # access to ServerLens config
 ```
 
-Дальше — зависит от сервисов. Установщик определяет группы автоматически и покажет точные команды, но типичные:
+Beyond that — it depends on your services. The installer detects groups and prints exact commands; typical cases:
 
-| Сервис | Группа (Ubuntu) | Группа (CentOS/RHEL) | Команда |
+| Service | Group (Ubuntu) | Group (CentOS/RHEL) | Command |
 |--------|------------------|-----------------------|---------|
-| syslog, auth.log, nginx | `adm` | `nginx` / `root` | `sudo usermod -aG adm rucode` |
-| PHP-FPM | `adm` (после фикса) | `root` | `sudo usermod -aG adm rucode` |
-| PostgreSQL | `postgres` | `postgres` | `sudo usermod -aG postgres rucode` |
-| RabbitMQ | `rabbitmq` | `rabbitmq` | `sudo usermod -aG rabbitmq rucode` |
+| syslog, auth.log, nginx | `adm` | `nginx` / `root` | `sudo usermod -aG adm deploy` |
+| PHP-FPM | `adm` (after fix) | `root` | `sudo usermod -aG adm deploy` |
+| PostgreSQL | `postgres` | `postgres` | `sudo usermod -aG postgres deploy` |
+| RabbitMQ | `rabbitmq` | `rabbitmq` | `sudo usermod -aG rabbitmq deploy` |
 
-> **Что такое `adm`?** Это стандартная системная группа Ubuntu/Debian для чтения логов. Создаётся при установке ОС. Большинство файлов в `/var/log/` принадлежат `root:adm`. Проверить: `getent group adm`
+> **What is `adm`?** A standard Ubuntu/Debian system group for reading logs. Created with the OS. Most files under `/var/log/` are `root:adm`. Check with: `getent group adm`
 
-**PHP-FPM логи** — частая проблема:
+**PHP-FPM logs** — a common issue:
 
-PHP-FPM пишет логи в `/var/log/php*-fpm.log`. На Ubuntu эти файлы по умолчанию принадлежат `root:root` с правами `600` — не читаемы никем, кроме root. Установщик автоматически меняет группу на `adm` и ставит `640`, но после **ротации логов** (logrotate) права могут сброситься.
+PHP-FPM writes to `/var/log/php*-fpm.log`. On Ubuntu these files are often `root:root` with mode `600` — not readable except by root. The installer sets group `adm` and mode `640`, but after **log rotation** (logrotate) permissions may reset.
 
-Чтобы права сохранялись, проверьте конфиг logrotate:
+To keep permissions stable, check the logrotate config:
 
 ```bash
 cat /etc/logrotate.d/php8.2-fpm
-# Должна быть строка (добавьте, если нет):
+# There should be a line (add if missing):
 create 0640 root adm
 ```
 
-**RabbitMQ логи:**
+**RabbitMQ logs:**
 
-Логи в `/var/log/rabbitmq/` принадлежат `rabbitmq:rabbitmq`. Установщик добавляет group read, но SSH-пользователь должен быть в группе `rabbitmq`.
+Logs under `/var/log/rabbitmq/` are `rabbitmq:rabbitmq`. The installer adds group read, but the SSH user must be in the `rabbitmq` group.
 
-**Как проверить, какая группа нужна для любого лога:**
+**How to see which group you need for any log:**
 
 ```bash
 ls -la /var/log/nginx/
 # -rw-r----- 1 root adm 12345 Mar 25 10:00 access.log
-#                    ^^^ — вот эту группу нужно добавить
+#                    ^^^ — add this group
 
 ls -la /var/log/rabbitmq/
 # drwxr-x--- 2 rabbitmq rabbitmq 4096 Mar 25 10:00 .
-#                       ^^^^^^^^ — нужна группа rabbitmq
+#                       ^^^^^^^^ — need rabbitmq group
 ```
 
-> **Важно:** после `usermod` нужно **перелогиниться** (завершить SSH-сессию и зайти заново), чтобы новые группы применились. Или выполнить `newgrp serverlens` в текущей сессии.
+> **Important:** after `usermod`, **log out and back in** (end the SSH session and reconnect) so new groups apply. Or run `newgrp serverlens` in the current session.
 
-> Установщик подскажет нужные команды в финальном выводе.
+> The installer suggests the needed commands in its final output.
 
 ---
 
-## Шаг 3. Проверить, что ServerLens работает на сервере
+## Step 3. Verify ServerLens on the server
 
-Проверяем **от имени SSH-пользователя** (того, под которым будет подключаться MCP-клиент):
+Test **as the SSH user** (the one the MCP client will use):
 
 ```bash
-# Проверить конфиг:
+# Validate config:
 php /opt/serverlens/bin/serverlens validate-config \
   --config /etc/serverlens/config.yaml
 
-# Быстрый тест stdio (Ctrl+C для выхода):
+# Quick stdio test (Ctrl+C to exit):
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | \
   php /opt/serverlens/bin/serverlens serve --config /etc/serverlens/config.yaml --stdio
 ```
 
-Должен вернуть JSON с `"serverInfo":{"name":"ServerLens","version":"1.0.0"}`.
+You should get JSON with `"serverInfo":{"name":"ServerLens","version":"1.0.0"}`.
 
-> Если получаете `File ... cannot be read` — значит SSH-пользователь не добавлен в группу `serverlens` (см. шаг 2 — раздел «Права доступа для SSH-пользователя»).
+> If you see `File ... cannot be read` — the SSH user is not in the `serverlens` group (see step 2 — “SSH user permissions”).
 
-> **Примечание:** systemd-сервис (`systemctl start serverlens`) нужен только для режима SSE. Для работы через MCP-клиент по SSH сервис запускать **не нужно** — MCP-клиент сам запускает ServerLens при подключении.
+> **Note:** the systemd service (`systemctl start serverlens`) is only needed for SSE mode. For MCP over SSH you **do not** need to start the service — the MCP client launches ServerLens on connect.
 
 ---
 
-## Шаг 4. Установить MCP-клиент на своей машине
+## Step 4. Install the MCP client on your machine
 
-Теперь переходим **на свой компьютер** (машина разработчика):
+Switch to **your computer** (developer machine):
 
 ```bash
-git clone git@gitlab.rucode.org:devtools/serverlens.git ~/serverlens
+git clone git@github.com:your-org/serverlens.git ~/serverlens
 cd ~/serverlens/mcp-client
 composer install
 ```
 
 ---
 
-## Шаг 5. Указать, к каким серверам подключаться
+## Step 5. Point the client at your servers
 
-MCP-клиент — это **локальная** программа на твоей машине. Она подключается к **удалённым** серверам по SSH. Для этого нужен конфиг, в котором перечислены серверы и SSH-доступы к ним.
+The MCP client is a **local** program on your machine. It reaches **remote** servers over SSH. You need a config that lists servers and SSH credentials.
 
-Скопировать шаблон:
+Copy the template:
 
 ```bash
 mkdir -p ~/.serverlens
 cp ~/serverlens/mcp-client/config.example.yaml ~/.serverlens/config.yaml
 ```
 
-Открыть `~/.serverlens/config.yaml` и заполнить данные **удалённого сервера** (того, на который ставили ServerLens в шагах 1–3):
+Open `~/.serverlens/config.yaml` and fill in the **remote server** where you installed ServerLens (steps 1–3):
 
 ```yaml
 servers:
-  # ↓ Произвольное имя сервера в конфиге (monitor, production, web1…).
-  #   В Cursor через MCP видны только serverlens_list и serverlens_call;
-  #   в serverlens_call указываешь это имя в поле "server", а нужную операцию — в "tool" (как в API Reference).
+  # ↓ Arbitrary name in the config (monitor, production, web1…).
+  #   In Cursor you only see serverlens_list and serverlens_call via MCP;
+  #   in serverlens_call use this name in "server" and the operation in "tool" (see API Reference).
   monitor:
     ssh:
-      host: "1.2.3.4"                # IP или hostname удалённого сервера
-      user: "rucode"                  # SSH-пользователь (тот, под которым заходишь по SSH)
+      host: "1.2.3.4"                # IP or hostname of the remote server
+      user: "deploy"                  # SSH user (same as you use for SSH)
       port: 22
-      key: "~/.ssh/id_ed25519"       # путь к SSH-ключу НА ТВОЕЙ МАШИНЕ
+      key: "~/.ssh/id_ed25519"       # path to SSH key ON YOUR MACHINE
     remote:
-      php: "php"                      # путь к PHP НА УДАЛЁННОМ СЕРВЕРЕ
-      serverlens_path: "/opt/serverlens/bin/serverlens"  # путь к ServerLens НА СЕРВЕРЕ
-      config_path: "/etc/serverlens/config.yaml"         # путь к конфигу НА СЕРВЕРЕ
+      php: "php"                      # PHP path ON THE REMOTE SERVER
+      serverlens_path: "/opt/serverlens/bin/serverlens"  # ServerLens path ON THE SERVER
+      config_path: "/etc/serverlens/config.yaml"         # config path ON THE SERVER
 ```
 
-> **Несколько серверов?** Просто добавь ещё один блок ниже с другим именем:
+> **Multiple servers?** Add another block with a different name:
 > ```yaml
 >   staging:
 >     ssh:
 >       host: "5.6.7.8"
->       user: "rucode"
+>       user: "deploy"
 >       key: "~/.ssh/id_ed25519"
 >     remote:
 >       php: "php"
@@ -215,17 +215,17 @@ servers:
 >       config_path: "/etc/serverlens/config.yaml"
 > ```
 
-Проверить, что SSH-подключение работает:
+Verify SSH works:
 
 ```bash
-ssh -i ~/.ssh/id_ed25519 rucode@1.2.3.4 "php /opt/serverlens/bin/serverlens validate-config --config /etc/serverlens/config.yaml"
+ssh -i ~/.ssh/id_ed25519 deploy@1.2.3.4 "php /opt/serverlens/bin/serverlens validate-config --config /etc/serverlens/config.yaml"
 ```
 
 ---
 
-## Шаг 6. Подключить к Cursor
+## Step 6. Connect to Cursor
 
-Добавить в `~/.cursor/mcp.json` (создать файл, если его нет):
+Add to `~/.cursor/mcp.json` (create the file if missing):
 
 ```json
 {
@@ -233,18 +233,18 @@ ssh -i ~/.ssh/id_ed25519 rucode@1.2.3.4 "php /opt/serverlens/bin/serverlens vali
     "serverlens": {
       "command": "php",
       "args": [
-        "/Users/ТВОЙ_ПОЛЬЗОВАТЕЛЬ/serverlens/mcp-client/bin/serverlens-mcp",
+        "/Users/YOUR_USERNAME/serverlens/mcp-client/bin/serverlens-mcp",
         "--config",
-        "/Users/ТВОЙ_ПОЛЬЗОВАТЕЛЬ/.serverlens/config.yaml"
+        "/Users/YOUR_USERNAME/.serverlens/config.yaml"
       ]
     }
   }
 }
 ```
 
-> **Важно:** пути должны быть **абсолютными**.
+> **Important:** paths must be **absolute**.
 
-Перезапустить Cursor. В логах MCP (Output → MCP) должно появиться:
+Restart Cursor. In MCP logs (Output → MCP) you should see:
 
 ```
 [MCP] Connecting to server 'production'...
@@ -255,51 +255,51 @@ ssh -i ~/.ssh/id_ed25519 rucode@1.2.3.4 "php /opt/serverlens/bin/serverlens vali
 
 ---
 
-## Обновление
+## Updates
 
-### На сервере
+### On the server
 
-Заходим на сервер, переходим в директорию с исходниками:
+SSH in and go to the source directory:
 
 ```bash
-ssh alex@1.2.3.4
+ssh user@1.2.3.4
 cd ~/serverlens-src
 ```
 
-**Рекомендуемый способ** (git pull от обычного пользователя + обновление от root):
+**Recommended** (git pull as normal user + update as root):
 
 ```bash
-git pull                                # от обычного пользователя
-sudo bash scripts/update.sh --no-pull   # от root
+git pull                                # as normal user
+sudo bash scripts/update.sh --no-pull   # as root
 ```
 
-**Если на сервере есть прямой доступ к Git-репозиторию**, можно в одну команду:
+**If the server has direct Git access**, you can use one command:
 
 ```bash
 sudo bash scripts/update.sh
 ```
 
-Скрипт автоматически:
-1. Выполнит `git pull` (определит владельца репо и запустит от его имени)
-2. Скопирует обновлённые файлы (`src/`, `bin/`, `composer.json`) в `/opt/serverlens/`
-3. Обновит PHP-зависимости (`composer install`)
-4. Обновит systemd-сервис, если он изменился
-5. Проверит валидность конфига
+The script will:
+1. Run `git pull` (detects repo owner and runs as that user)
+2. Copy updated files (`src/`, `bin/`, `composer.json`) to `/opt/serverlens/`
+3. Refresh PHP dependencies (`composer install`)
+4. Update the systemd unit if it changed
+5. Validate the config
 
-**Конфиг `/etc/serverlens/config.yaml` не затрагивается** — все пользовательские настройки сохраняются.
+**`/etc/serverlens/config.yaml` is not touched** — your settings stay.
 
-Флаги:
-- `--no-pull` — не делать `git pull` (если уже обновили вручную)
-- `--restart` — перезапустить systemd-сервис после обновления
+Flags:
+- `--no-pull` — skip `git pull` (if you already updated manually)
+- `--restart` — restart the systemd service after update
 
 ```bash
-# Если сервис запущен (SSE-режим), перезапустить автоматически:
+# If the service is running (SSE mode), restart automatically:
 sudo bash scripts/update.sh --restart --no-pull
 ```
 
-> Для SSH+stdio режима перезапуск сервиса не нужен — MCP-клиент запускает ServerLens при каждом подключении, поэтому обновлённый код подхватится автоматически.
+> For SSH+stdio you do not need to restart the service — the MCP client starts ServerLens on each connection, so new code is picked up automatically.
 
-### На машине разработчика (MCP-клиент)
+### On the developer machine (MCP client)
 
 ```bash
 cd ~/serverlens
@@ -307,25 +307,25 @@ git pull
 cd mcp-client && composer install
 ```
 
-Перезапустите Cursor, чтобы MCP-клиент подхватил изменения.
+Restart Cursor so the MCP client picks up changes.
 
 ---
 
-## Готово!
+## Done
 
-Можно формулировать запросы **на естественном языке** — Cursor сам вызовет `serverlens_list` / `serverlens_call` и подставит нужный сервер и инструмент. Примеры:
-- *«Покажи последние ошибки nginx»*
-- *«Сколько пользователей зарегистрировалось за март?»*
-- *«Какой статус Docker-контейнеров?»*
-- *«Покажи конфигурацию PostgreSQL»*
+You can phrase requests in **natural language** — Cursor will call `serverlens_list` / `serverlens_call` with the right server and tool. Examples:
+- *“Show the latest nginx errors”*
+- *“How many users registered in March?”*
+- *“What is the status of Docker containers?”*
+- *“Show PostgreSQL configuration”*
 
 ---
 
-## Ссылки
+## References
 
-| Документ | Что содержит |
+| Document | Contents |
 |----------|-------------|
-| [Архитектура](architecture.md) | Как устроена система, поток данных, диаграммы |
-| [Настройка сервера](server/setup.md) | Подробная конфигурация всех модулей ServerLens |
-| [API Reference](server/api.md) | Полный справочник инструментов удалённого ServerLens (логи, конфиги, БД, система) |
-| [MCP-клиент](../mcp-client/docs/README.md) | Детальная документация MCP-прокси |
+| [Architecture](architecture.md) | System layout, data flow, diagrams |
+| [Server setup](server/setup.md) | Detailed configuration of all ServerLens modules |
+| [API Reference](server/api.md) | Full reference for remote ServerLens tools (logs, configs, DB, system) |
+| [MCP client](../mcp-client/docs/README.md) | MCP proxy documentation |

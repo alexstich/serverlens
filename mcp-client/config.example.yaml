@@ -1,52 +1,52 @@
 # ═══════════════════════════════════════════
-# ServerLens MCP Client — Конфигурация
+# ServerLens MCP Client — Configuration
 # ═══════════════════════════════════════════
 #
-# Этот файл описывает УДАЛЁННЫЕ серверы, на которых установлен ServerLens.
-# MCP-клиент (эта программа) работает на ТВОЕЙ машине и подключается
-# к серверам через SSH.
+# This file describes REMOTE servers where ServerLens is installed.
+# The MCP client (this program) runs on YOUR machine and connects
+# to servers over SSH.
 #
-# Установка:
+# Setup:
 #   cp config.example.yaml ~/.serverlens/config.yaml
 #   nano ~/.serverlens/config.yaml
 
 servers:
-  # ─── Имя сервера ───
-  # Придумай любое: monitor, production, web1, staging...
-  # Имя сервера используется в вызовах serverlens_call:
+  # ─── Server name ───
+  # Pick any name: monitor, production, web1, staging...
+  # The server name is used in serverlens_call:
   #   { "server": "monitor", "tool": "logs_tail", ... }
-  # и в логах MCP-клиента.
+  # and in MCP client logs.
   monitor:
 
-    # ─── SSH-подключение ───
-    # Данные для подключения к удалённому серверу (как в ssh rucode@1.2.3.4)
+    # ─── SSH connection ───
+    # Credentials for the remote server (like ssh deploy@1.2.3.4)
     ssh:
-      host: "1.2.3.4"                # IP или hostname удалённого сервера
-      user: "rucode"                  # SSH-пользователь
+      host: "1.2.3.4"                # IP or hostname of the remote server
+      user: "deploy"                  # SSH user
       port: 22
-      key: "~/.ssh/id_ed25519"       # путь к SSH-ключу НА ТВОЕЙ МАШИНЕ
-      # Дополнительные SSH-опции (опционально).
-      # Keepalive (ServerAliveInterval=15) уже встроен в MCP-клиент;
-      # блок options нужен только для своих значений или других опций.
+      key: "~/.ssh/id_ed25519"       # path to SSH key ON YOUR MACHINE
+      # Extra SSH options (optional).
+      # Keepalive (ServerAliveInterval=15) is built into the MCP client;
+      # use options only for your own values or other flags.
       options:
         ConnectTimeout: "10"
         ServerAliveInterval: "30"
         ServerAliveCountMax: "3"
 
-    # ─── Пути на удалённом сервере ───
-    # Где находятся PHP и ServerLens на СЕРВЕРЕ (не на твоей машине!)
+    # ─── Paths on the remote server ───
+    # Where PHP and ServerLens live on the SERVER (not on your machine)
     remote:
-      php: "php"                                          # обычно просто "php"
-      serverlens_path: "/opt/serverlens/bin/serverlens"   # куда установился ServerLens
-      config_path: "/etc/serverlens/config.yaml"          # конфиг ServerLens на сервере
+      php: "php"                                          # usually just "php"
+      serverlens_path: "/opt/serverlens/bin/serverlens"   # ServerLens install path
+      config_path: "/etc/serverlens/config.yaml"          # ServerLens config on the server
 
-  # ─── Пример второго сервера ───
-  # Раскомментируй и заполни, если нужен ещё один:
+  # ─── Second server example ───
+  # Uncomment and fill in if you need another:
   #
   # staging:
   #   ssh:
   #     host: "5.6.7.8"
-  #     user: "rucode"
+  #     user: "deploy"
   #     key: "~/.ssh/id_ed25519"
   #   remote:
   #     php: "php"

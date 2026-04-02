@@ -1,64 +1,64 @@
 # ServerLens
 
-**Версия:** 2.0.0
+**Version:** 2.0.0
 
-Защищённый read-only MCP-инструмент для диагностики удалённых серверов. Позволяет из Cursor читать логи, конфигурации, делать безопасные запросы к PostgreSQL и мониторить состояние системы — всё через SSH.
+A secure read-only MCP tool for diagnosing remote servers. From Cursor you can read logs and configuration, run safe PostgreSQL queries, and monitor system state — all over SSH.
 
-## Как это работает
+## How it works
 
 ```
 ┌─────────────┐    stdio    ┌──────────────────┐    SSH     ┌──────────────┐
-│   Cursor     │◄──────────►│  MCP-прокси       │◄─────────►│  ServerLens   │
-│              │            │  (твоя машина)    │            │  (сервер)     │
+│   Cursor     │◄──────────►│  MCP proxy       │◄─────────►│  ServerLens   │
+│              │            │  (your machine)  │            │  (server)     │
 └─────────────┘             └──────────────────┘            └──────────────┘
 ```
 
-| Компонент | Где | Что делает |
+| Component | Where | What it does |
 |-----------|-----|------------|
-| **ServerLens** (`src/`) | Удалённый сервер | Read-only доступ к логам, конфигам, БД, системной информации |
-| **MCP-прокси** (`mcp-client/`) | Машина разработчика | Локальный MCP-сервер для Cursor: модель диспетча (`serverlens_list` / `serverlens_call`), авто‑переподключение при обрыве, встроенный SSH keepalive |
+| **ServerLens** (`src/`) | Remote server | Read-only access to logs, configs, DB, system information |
+| **MCP proxy** (`mcp-client/`) | Developer machine | Local MCP server for Cursor: dispatch model (`serverlens_list` / `serverlens_call`), auto-reconnect on disconnect, built-in SSH keepalive |
 
-Cursor не знает про SSH — он общается с локальным MCP-прокси, а тот подключается к серверам сам.
+Cursor does not talk SSH directly — it speaks to the local MCP proxy, which connects to servers on its own.
 
-## Установка
+## Installation
 
-> **Полная пошаговая инструкция: [docs/quickstart.md](docs/quickstart.md)**
+> **Full step-by-step guide: [docs/quickstart.md](docs/quickstart.md)**
 
-Краткая последовательность:
+Short sequence:
 
-1. **На сервере:** клонировать репозиторий, запустить `scripts/install.sh`, настроить `/etc/serverlens/config.yaml`
-2. **На своей машине:** `cd mcp-client && composer install`, настроить `~/.serverlens/config.yaml` с SSH-параметрами
-3. **В Cursor:** добавить MCP-прокси в `~/.cursor/mcp.json`, перезапустить
+1. **On the server:** clone the repo, run `scripts/install.sh`, configure `/etc/serverlens/config.yaml`
+2. **On your machine:** `cd mcp-client && composer install`, configure `~/.serverlens/config.yaml` with SSH settings
+3. **In Cursor:** add the MCP proxy to `~/.cursor/mcp.json`, restart
 
-## Инструменты (MCP-прокси v2)
+## Tools (MCP proxy v2)
 
-В Cursor видны **два** инструмента прокси; удалённые операции вызываются через них:
+In Cursor you see **two** proxy tools; remote operations go through them:
 
-| Инструмент | Назначение |
+| Tool | Purpose |
 |------------|------------|
-| `serverlens_list` | Без параметров — список серверов из конфига; с `{ "server": "имя" }` — список инструментов на этом сервере |
-| `serverlens_call` | Вызов: `{ "server": "rias", "tool": "db_query", "arguments": { ... } }` |
+| `serverlens_list` | No parameters — list servers from config; with `{ "server": "name" }` — list tools on that server |
+| `serverlens_call` | Invoke: `{ "server": "my-server", "tool": "db_query", "arguments": { ... } }` |
 
-На сервере по-прежнему доступны все read-only инструменты ServerLens (логи, конфиги, БД, система) — см. [API Reference](docs/server/api.md). В **LogReader** поддерживаются источники `type: "directory"` с glob-шаблонами.
+On the server, all ServerLens read-only tools remain available (logs, configs, DB, system) — see [API Reference](docs/server/api.md). **LogReader** supports `type: "directory"` sources with glob patterns.
 
-## Безопасность
+## Security
 
-- **SSH-ключи** — аутентификация через стандартный SSH
-- **Whitelist** — доступ только к явно разрешённым файлам, таблицам, полям
-- **Нет raw SQL** — только структурированные запросы с параметризацией
-- **Редакция секретов** — пароли, ключи, токены автоматически скрываются
-- **Read-only** — ServerLens физически не может модифицировать данные
+- **SSH keys** — authentication via standard SSH
+- **Whitelist** — access only to explicitly allowed files, tables, fields
+- **No raw SQL** — only structured, parameterized queries
+- **Secret redaction** — passwords, keys, and tokens are masked automatically
+- **Read-only** — ServerLens cannot modify data
 
-## Документация
+## Documentation
 
-| Документ | Описание |
+| Document | Description |
 |----------|----------|
-| **[Быстрый старт](docs/quickstart.md)** | Пошаговая установка от нуля до работающей системы |
-| [Архитектура](docs/architecture.md) | Как устроена система, компоненты, поток данных |
-| [Настройка сервера](docs/server/setup.md) | Подробная конфигурация ServerLens |
-| [API Reference](docs/server/api.md) | Справочник всех инструментов |
-| [MCP-прокси](mcp-client/docs/README.md) | Установка и настройка MCP-клиента |
+| **[Quick start](docs/quickstart.md)** | Step-by-step setup from zero to a working system |
+| [Architecture](docs/architecture.md) | How the system is built, components, data flow |
+| [Server setup](docs/server/setup.md) | Detailed ServerLens configuration |
+| [API Reference](docs/server/api.md) | Reference for all tools |
+| [MCP proxy](mcp-client/docs/README.md) | Installing and configuring the MCP client |
 
-## Стек
+## Stack
 
 PHP 8.1+, ReactPHP, Symfony YAML, PDO PostgreSQL

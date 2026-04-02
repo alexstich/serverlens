@@ -1,17 +1,17 @@
-# ServerLens — Архитектура системы
+# ServerLens — System architecture
 
-> Для пошаговой установки: [quickstart.md](quickstart.md) | Для настройки сервера: [server/setup.md](server/setup.md) | API: [server/api.md](server/api.md)
+> Step-by-step install: [quickstart.md](quickstart.md) | Server configuration: [server/setup.md](server/setup.md) | API: [server/api.md](server/api.md)
 
-## Общая схема
+## Overview
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                        Компьютер разработчика                                │
+│                        Developer machine                                     │
 │                                                                              │
 │   ┌─────────────┐    stdio (JSON-RPC)    ┌──────────────────────────┐       │
 │   │   Cursor /   │◄────────────────────►│   ServerLens MCP Proxy    │       │
 │   │ Claude Desktop│                      │   (mcp-client/)           │       │
-│   │  (MCP-клиент)│                      │  только 2 tools:         │       │
+│   │  (MCP client)│                      │  only 2 tools:            │       │
 │   └─────────────┘                       │  serverlens_list,        │       │
 │                                          │  serverlens_call         │       │
 │                                          │  ┌──────────────────────┐ │       │
@@ -22,16 +22,16 @@
 │                                                        │                     │
 └────────────────────────────────────────────────────────┼─────────────────────┘
                                                          │
-                                                    SSH (ключ)
+                                                    SSH (key)
                                                          │
 ┌────────────────────────────────────────────────────────┼─────────────────────┐
-│                        Удалённый сервер                 │                     │
+│                        Remote server                    │                     │
 │                                                        │                     │
 │   ┌────────────────────────────────────────────────────┼───────────────────┐ │
-│   │  ServerLens (stdio режим)                          │                   │ │
+│   │  ServerLens (stdio mode)                           │                   │ │
 │   │                                                    ▼                   │ │
 │   │  ┌──────────────────┐    ┌────────────────────────────────────────┐   │ │
-│   │  │  MCP Server       │    │  Модули                                │   │ │
+│   │  │  MCP Server       │    │  Modules                               │   │ │
 │   │  │  (JSON-RPC 2.0)  │───►│                                        │   │ │
 │   │  │                   │    │  ┌──────────┐ ┌──────────────┐        │   │ │
 │   │  │  - initialize    │    │  │ LogReader │ │ ConfigReader │        │   │ │
@@ -56,95 +56,95 @@
 
 ---
 
-## Компоненты
+## Components
 
 ### 1. MCP Proxy (mcp-client/)
 
-Локальный MCP-сервер на машине разработчика.
+Local MCP server on the developer machine.
 
-**Назначение:** Cursor не знает про SSH. MCP Proxy — мост между Cursor и удалёнными серверами.
+**Purpose:** Cursor does not speak SSH. MCP Proxy bridges Cursor and remote servers.
 
-**Протокол:** stdio (JSON-RPC 2.0) — Cursor запускает его как команду.
+**Protocol:** stdio (JSON-RPC 2.0) — Cursor starts it as a subprocess.
 
-**Два инструмента для Cursor (модель dispatch):** вместо экспорта десятков удалённых tools с префиксами (`production__logs_tail` и т.п.) прокси отдаёт Cursor только **`serverlens_list`** и **`serverlens_call`**. Реальные инструменты ServerLens вызываются через второй — с указанием сервера и имени tool.
+**Two tools for Cursor (dispatch model):** instead of exposing dozens of remote tools with prefixes (`production__logs_tail`, etc.), the proxy exposes only **`serverlens_list`** and **`serverlens_call`**. Real ServerLens tools are invoked via the latter — with server name and tool name.
 
-**«Матрёшка» (навигация):**
-- `serverlens_list()` — список настроенных серверов
-- `serverlens_list({ server: "rias" })` — список tools на этом сервере (как на удалённом `tools/list`)
-- `serverlens_call({ server: "rias", tool: "db_query", arguments: { ... } })` — выполнение инструмента на сервере
+**Nested navigation:**
+- `serverlens_list()` — list configured servers
+- `serverlens_list({ server: "my-server" })` — list tools on that server (same as remote `tools/list`)
+- `serverlens_call({ server: "my-server", tool: "db_query", arguments: { ... } })` — run a tool on the server
 
-**Функции:**
-- Читает локальную конфигурацию с SSH-параметрами
-- Устанавливает SSH-соединения к серверам (keepalive: `ServerAliveInterval=15`, `ServerAliveCountMax=3`)
-- Запускает ServerLens в stdio-режиме на каждом сервере
-- При обрыве SSH — автоматическое переподключение и восстановление сессии с удалённым MCP
-- Транслирует вызовы `serverlens_call` в JSON-RPC `tools/call` на нужном сервере
-- Возвращает ответы обратно в Cursor
+**Responsibilities:**
+- Read local configuration with SSH parameters
+- Open SSH connections to servers (keepalive: `ServerAliveInterval=15`, `ServerAliveCountMax=3`)
+- Start ServerLens in stdio mode on each server
+- On SSH drop — automatic reconnect and restore session with remote MCP
+- Map `serverlens_call` to JSON-RPC `tools/call` on the right server
+- Return responses to Cursor
 
-**Жизненный цикл:**
-1. Cursor запускает `serverlens-mcp` → устанавливаются SSH-сессии → на каждом сервере поднимается ServerLens (stdio)
-2. Cursor вызывает `serverlens_list()` — видит серверы; при необходимости `serverlens_list({ server })` — список tools на сервере
-3. Для действия — `serverlens_call({ server, tool, arguments })`; прокси маршрутизирует на нужный SSH-канал и передаёт `tools/call` удалённому ServerLens
-4. Ответ возвращается в Cursor; при падении SSH прокси переподключается и повторяет операцию при следующем вызове
+**Lifecycle:**
+1. Cursor starts `serverlens-mcp` → SSH sessions come up → ServerLens (stdio) on each server
+2. Cursor calls `serverlens_list()` — sees servers; optionally `serverlens_list({ server })` — tools on that server
+3. For actions — `serverlens_call({ server, tool, arguments })`; proxy routes to the SSH channel and forwards `tools/call` to remote ServerLens
+4. Response goes back to Cursor; if SSH fails, proxy reconnects and retries on the next call
 
-### 2. ServerLens (серверная часть)
+### 2. ServerLens (server-side)
 
-MCP-сервер, работающий на удалённом сервере.
+MCP server running on the remote host.
 
-**Протокол:** stdio (для использования через MCP Proxy) или SSE (для прямого подключения).
+**Protocol:** stdio (for MCP Proxy) or SSE (for direct access).
 
-**Модули:**
+**Modules:**
 
-| Модуль | Что делает | Источник данных |
-|--------|-----------|-----------------|
-| **LogReader** | Чтение логов | Файлы из whitelist |
-| **ConfigReader** | Чтение конфигов (секреты скрыты) | Файлы из whitelist |
-| **DbQuery** | Безопасные запросы к БД | PostgreSQL (read-only user) |
-| **SystemInfo** | Состояние системы | shell_exec (systemctl, docker, free, df) |
+| Module | Role | Data source |
+|--------|------|-------------|
+| **LogReader** | Read logs | Whitelisted files |
+| **ConfigReader** | Read configs (secrets redacted) | Whitelisted files |
+| **DbQuery** | Safe database queries | PostgreSQL (read-only user) |
+| **SystemInfo** | System state | shell_exec (systemctl, docker, free, df) |
 
-**Безопасность:**
-- Whitelist-модель: доступны ТОЛЬКО явно разрешённые ресурсы
-- Нет raw SQL — только структурированные запросы через whitelist полей
-- Автоматическая редакция секретов (пароли, ключи, токены)
-- Read-only пользователь PostgreSQL
-- Rate limiting + аудит-логирование
+**Security:**
+- Whitelist model: only explicitly allowed resources
+- No raw SQL — structured queries via whitelisted fields only
+- Automatic redaction of secrets (passwords, keys, tokens)
+- Read-only PostgreSQL user
+- Rate limiting + audit logging
 
 ---
 
-## Поток данных
+## Data flow
 
-### Запрос: «Покажи последние ошибки nginx»
+### Request: “Show the latest nginx errors”
 
 ```
-1. Cursor: "Покажи последние ошибки nginx"
+1. Cursor: "Show the latest nginx errors"
    │
-2. Claude/AI (через dispatch):
+2. Claude/AI (via dispatch):
    │  serverlens_call({
    │    server: "production",
    │    tool: "logs_search",
    │    arguments: { source: "nginx_error", query: "error", lines: 50 }
    │  })
    │
-3. MCP Proxy (локально):
-   │  ├── Маршрутизирует на SSH-сессию "production"
-   │  ├── Пересылает tools/call → logs_search(...) через JSON-RPC по SSH
+3. MCP Proxy (local):
+   │  ├── Routes to SSH session "production"
+   │  ├── Forwards tools/call → logs_search(...) over JSON-RPC via SSH
    │  │
-4. ServerLens (на сервере):
-   │  ├── Rate Limiter: OK
-   │  ├── Проверяет "nginx_error" в whitelist: OK
-   │  ├── Открывает /var/log/nginx/error.log (read-only)
-   │  ├── Ищет строки, содержащие "error"
-   │  ├── Ограничивает до 50 строк
-   │  ├── Пишет в аудит-лог
-   │  └── Возвращает результат
+4. ServerLens (on server):
+   │  ├── Rate limiter: OK
+   │  ├── Checks "nginx_error" in whitelist: OK
+   │  ├── Opens /var/log/nginx/error.log (read-only)
+   │  ├── Finds lines containing "error"
+   │  ├── Limits to 50 lines
+   │  ├── Writes audit log
+   │  └── Returns result
    │
-5. MCP Proxy → Cursor → AI показывает пользователю
+5. MCP Proxy → Cursor → AI shows the user
 ```
 
-### Запрос: «Сколько пользователей за март?»
+### Request: “How many users in March?”
 
 ```
-1. Cursor: "Сколько пользователей зарегистрировалось за март?"
+1. Cursor: "How many users registered in March?"
    │
 2. AI:
    │  serverlens_call({
@@ -157,105 +157,105 @@ MCP-сервер, работающий на удалённом сервере.
    │    }
    │  })
    │
-3. MCP Proxy → tools/call на сервере → SSH →
+3. MCP Proxy → tools/call on server → SSH →
    │
 4. ServerLens:
-   │  ├── Проверяет "app_prod" в whitelist: OK
-   │  ├── Проверяет "users" в whitelist: OK
-   │  ├── Проверяет "created_at" в allowed_filters: OK
-   │  ├── Строит SQL: SELECT COUNT(*) FROM "users" WHERE "created_at" >= $1 AND "created_at" < $2
-   │  ├── Выполняет через PDO (prepared statement, read-only user)
-   │  ├── Пишет в аудит-лог (без значений фильтров)
-   │  └── Возвращает {"count": 1234}
+   │  ├── Checks "myapp_prod" in whitelist: OK
+   │  ├── Checks "users" in whitelist: OK
+   │  ├── Checks "created_at" in allowed_filters: OK
+   │  ├── Builds SQL: SELECT COUNT(*) FROM "users" WHERE "created_at" >= $1 AND "created_at" < $2
+   │  ├── Executes via PDO (prepared statement, read-only user)
+   │  ├── Writes audit log (without filter values)
+   │  └── Returns {"count": 1234}
    │
-5. MCP Proxy → Cursor → "За март зарегистрировалось 1234 пользователя"
+5. MCP Proxy → Cursor → "1234 users registered in March"
 ```
 
 ---
 
-## Транспорты
+## Transports
 
-### stdio (рекомендуемый)
+### stdio (recommended)
 
 ```
 Cursor ←stdin/stdout→ MCP Proxy ←SSH stdin/stdout→ ServerLens
 ```
 
-- Каждое сообщение — JSON-объект на одной строке
-- Без дополнительного фреймирга
-- SSH обеспечивает шифрование и аутентификацию
-- Нет открытых портов
-- Нет необходимости в токенах (SSH-ключ = аутентификация)
+- Each message is one JSON object per line
+- No extra framing layer
+- SSH provides encryption and authentication
+- No open ports
+- No tokens required (SSH key = authentication)
 
-### SSE (альтернативный)
+### SSE (alternative)
 
 ```
-MCP-клиент ←HTTP SSE→ ServerLens (через SSH-туннель)
+MCP client ←HTTP SSE→ ServerLens (via SSH tunnel)
 ```
 
-- GET /sse — SSE-поток (server → client)
-- POST /message?sessionId=xxx — сообщения (client → server)
-- Bearer-токен для аутентификации
-- Нужен SSH-туннель: `ssh -L 9600:127.0.0.1:9600 user@server`
+- GET /sse — SSE stream (server → client)
+- POST /message?sessionId=xxx — messages (client → server)
+- Bearer token for authentication
+- Requires SSH tunnel: `ssh -L 9600:127.0.0.1:9600 user@server`
 
 ---
 
-## Структура проекта
+## Repository layout
 
 ```
 serverlens/
 ├── README.md
-├── description.md              # Исходное описание
+├── description.md              # Original description
 │
-├── src/                        # Серверная часть (ServerLens)
+├── src/                        # Server (ServerLens)
 │   ├── Application.php
 │   ├── Config.php
 │   ├── Mcp/
-│   │   ├── Server.php          # MCP-протокол
+│   │   ├── Server.php          # MCP protocol
 │   │   └── Tool.php
 │   ├── Transport/
 │   │   ├── TransportInterface.php
 │   │   ├── SseTransport.php    # SSE (ReactPHP)
 │   │   └── StdioTransport.php  # stdio
 │   ├── Auth/
-│   │   ├── TokenAuth.php       # Bearer-токен (argon2id)
+│   │   ├── TokenAuth.php       # Bearer token (argon2id)
 │   │   └── RateLimiter.php
 │   ├── Module/
 │   │   ├── ModuleInterface.php
-│   │   ├── LogReader.php       # Логи
-│   │   ├── ConfigReader.php    # Конфиги
+│   │   ├── LogReader.php       # Logs
+│   │   ├── ConfigReader.php    # Configs
 │   │   ├── DbQuery.php         # PostgreSQL
-│   │   └── SystemInfo.php      # Системная информация
+│   │   └── SystemInfo.php      # System information
 │   ├── Security/
-│   │   ├── PathGuard.php       # Защита от path traversal
-│   │   └── Redactor.php        # Редакция секретов
+│   │   ├── PathGuard.php       # Path traversal protection
+│   │   └── Redactor.php        # Secret redaction
 │   └── Audit/
 │       └── AuditLogger.php
 │
-├── bin/serverlens              # CLI сервера
-├── composer.json               # Зависимости сервера
-├── config.example.yaml         # Пример конфигурации сервера
+├── bin/serverlens              # Server CLI
+├── composer.json               # Server dependencies
+├── config.example.yaml         # Example server config
 │
-├── mcp-client/                 # MCP-клиент (для машины разработчика)
+├── mcp-client/                 # MCP client (developer machine)
 │   ├── src/
 │   │   ├── Config.php
-│   │   ├── SshConnection.php   # SSH-подключение
-│   │   └── McpProxy.php        # MCP-прокси
-│   ├── bin/serverlens-mcp      # CLI клиента
+│   │   ├── SshConnection.php   # SSH connection
+│   │   └── McpProxy.php        # MCP proxy
+│   ├── bin/serverlens-mcp      # Client CLI
 │   ├── composer.json
-│   ├── config.example.yaml     # SSH-конфигурация
+│   ├── config.example.yaml     # SSH configuration
 │   └── docs/
-│       └── README.md           # Документация MCP-клиента
+│       └── README.md           # MCP client docs
 │
-├── docs/                       # Документация
-│   ├── architecture.md         # Этот документ
+├── docs/                       # Documentation
+│   ├── architecture.md         # This document
 │   └── server/
-│       ├── setup.md            # Установка сервера
-│       └── api.md              # API Reference
+│       ├── setup.md            # Server installation
+│       └── api.md              # API reference
 │
 ├── scripts/
-│   ├── install.sh              # Установка на сервер
-│   └── setup_db_users.sql      # SQL для PostgreSQL
+│   ├── install.sh              # Server install
+│   └── setup_db_users.sql      # PostgreSQL SQL
 │
 └── etc/
     └── serverlens.service      # systemd unit
@@ -263,15 +263,15 @@ serverlens/
 
 ---
 
-## Технологический стек
+## Technology stack
 
-| Компонент | Технология | Почему |
-|-----------|-----------|--------|
-| Язык | **PHP 8.1+** | Широкая доступность, нет внешних runtime |
-| MCP-протокол | **JSON-RPC 2.0** (реализован вручную) | Минимум зависимостей, полный контроль |
-| HTTP (SSE) | **ReactPHP** | Async PHP для long-lived SSE-соединений |
-| Конфигурация | **Symfony YAML** | Стандартный YAML-парсер для PHP |
-| БД | **PDO + pdo_pgsql** | Встроенный в PHP, prepared statements |
-| SSH | **openssh-client** (через proc_open) | Стандартный SSH, нет PHP-расширений |
-| Хеширование | **password_hash (ARGON2ID)** | Встроенный в PHP 7.2+, безопасный |
-| Процесс | **systemd** | Стандарт Linux для управления сервисами |
+| Piece | Technology | Rationale |
+|-------|------------|-----------|
+| Language | **PHP 8.1+** | Widely available, no extra runtime |
+| MCP | **JSON-RPC 2.0** (hand-rolled) | Few dependencies, full control |
+| HTTP (SSE) | **ReactPHP** | Async PHP for long-lived SSE |
+| Configuration | **Symfony YAML** | Standard YAML parser for PHP |
+| Database | **PDO + pdo_pgsql** | Built into PHP, prepared statements |
+| SSH | **openssh-client** (via proc_open) | Standard SSH, no PHP extensions |
+| Hashing | **password_hash (ARGON2ID)** | Built into PHP 7.2+, secure |
+| Process manager | **systemd** | Standard Linux service management |
