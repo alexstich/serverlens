@@ -36,7 +36,7 @@ Cursor не знает про SSH — он общается с локальны�
 
 ```bash
 git clone git@github.com:alexstich/serverlens.git
-cd sauron/mcp-client
+cd serverlens/mcp-client
 composer install
 ```
 
@@ -83,7 +83,7 @@ ssh -i ~/.ssh/id_ed25519 alex@1.2.3.4 "php /opt/serverlens/bin/serverlens valida
     "serverlens": {
       "command": "php",
       "args": [
-        "/полный/путь/к/sauron/mcp-client/bin/serverlens-mcp",
+        "/полный/путь/к/serverlens/mcp-client/bin/serverlens-mcp",
         "--config",
         "/Users/ваш_пользователь/.serverlens/config.yaml"
       ]

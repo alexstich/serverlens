@@ -174,7 +174,7 @@ select_databases() {
     done <<< "$databases"
 
     echo ""
-    local sel; sel=$(ask_input "Какие БД мониторить? (номера через запятую или 'all')")
+    local sel; sel=$(ask_input "Какие БД мониторить? (all / номера через запятую / Enter — пропустить)" "all")
 
     if [[ "$sel" == "all" ]]; then
         SELECTED_DBS=("${db_list[@]}")
@@ -274,7 +274,7 @@ configure_tables() {
         done <<< "$tables"
 
         echo ""
-        local tsel; tsel=$(ask_input "Таблицы для мониторинга? (номера, 'all' или пустое)")
+        local tsel; tsel=$(ask_input "Таблицы для мониторинга? (all / номера через запятую / Enter — пропустить)" "all")
         [[ -z "$tsel" ]] && continue
 
         declare -a selected_tables=()

@@ -1,4 +1,4 @@
-# ServerLens (Sauron)
+# ServerLens
 
 **Версия:** 2.0.0
 
