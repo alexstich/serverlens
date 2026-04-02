@@ -4,13 +4,13 @@
 #
 # Description:
 #   Updates the installed ServerLens to the current version. It:
-#     1. Checks prerequisites (root, /opt/serverlens exists, PHP)
+#     1. Checks prerequisites (root, /opt/serverlens exists, Python)
 #     2. Fetches updates from the git repository (git pull --ff-only)
 #        — pull runs as the owner of .git, not root
 #        — if git is unavailable, suggests alternatives (rsync, manual pull)
 #     3. Backs up current files under /opt/serverlens/.backup.TIMESTAMP
-#     4. Replaces src/, bin/, composer.json, composer.lock in /opt/serverlens
-#     5. Updates PHP dependencies (composer install --no-dev)
+#     4. Replaces serverlens/, pyproject.toml, requirements.txt in /opt/serverlens
+#     5. Updates Python dependencies (pip install .)
 #     6. Validates configuration (validate-config)
 #     7. Optionally restarts the systemd service (--restart)
 #
@@ -84,7 +84,17 @@ check_prerequisites() {
 
     [[ -f "${CONFIG_DIR}/config.yaml" ]] || warn "Config ${CONFIG_DIR}/config.yaml not found"
 
-    command -v php &>/dev/null || fail "PHP not found"
+    local python_cmd=""
+    for cmd in python3 python; do
+        if command -v "$cmd" &>/dev/null; then
+            python_cmd="$cmd"
+            break
+        fi
+    done
+    [[ -z "$python_cmd" ]] && fail "Python not found"
+
+    [[ -d "${INSTALL_DIR}/venv" ]] || fail "Virtual environment not found at ${INSTALL_DIR}/venv. Run install.sh first"
+
     ok "Prerequisites OK"
 }
 
@@ -172,19 +182,18 @@ copy_files() {
     local backup_dir="${INSTALL_DIR}/.backup.$(date +%Y%m%d%H%M%S)"
     mkdir -p "$backup_dir"
 
-    for item in src bin composer.json composer.lock; do
+    for item in serverlens pyproject.toml requirements.txt; do
         if [[ -e "${INSTALL_DIR}/${item}" ]]; then
             cp -r "${INSTALL_DIR}/${item}" "${backup_dir}/" 2>/dev/null || true
         fi
     done
     ok "Backup: ${backup_dir}"
 
-    rm -rf "${INSTALL_DIR}/src" "${INSTALL_DIR}/bin"
-    cp -r "${SCRIPT_DIR}/src" "${INSTALL_DIR}/"
-    cp -r "${SCRIPT_DIR}/bin" "${INSTALL_DIR}/"
-    cp "${SCRIPT_DIR}/composer.json" "${INSTALL_DIR}/"
-    cp "${SCRIPT_DIR}/composer.lock" "${INSTALL_DIR}/" 2>/dev/null || true
-    chmod +x "${INSTALL_DIR}/bin/serverlens"
+    rm -rf "${INSTALL_DIR}/serverlens"
+    cp -r "${SCRIPT_DIR}/serverlens" "${INSTALL_DIR}/"
+    cp "${SCRIPT_DIR}/pyproject.toml" "${INSTALL_DIR}/"
+    cp "${SCRIPT_DIR}/requirements.txt" "${INSTALL_DIR}/"
+    cp "${SCRIPT_DIR}/config.example.yaml" "${INSTALL_DIR}/" 2>/dev/null || true
     ok "Files updated in ${INSTALL_DIR}"
 
     if [[ -f "${SCRIPT_DIR}/etc/serverlens.service" ]]; then
@@ -200,15 +209,14 @@ copy_files() {
 }
 
 update_dependencies() {
-    echo -e "\n${BOLD}[4/5] PHP dependencies${NC}"
+    echo -e "\n${BOLD}[4/5] Python dependencies${NC}"
 
-    cd "${INSTALL_DIR}"
-
-    if ! command -v composer &>/dev/null; then
-        fail "Composer not found"
+    if [[ ! -x "${INSTALL_DIR}/venv/bin/pip" ]]; then
+        fail "pip not found in ${INSTALL_DIR}/venv"
     fi
 
-    composer install --no-dev --optimize-autoloader --no-interaction --quiet
+    "${INSTALL_DIR}/venv/bin/pip" install --quiet --upgrade pip 2>/dev/null || true
+    "${INSTALL_DIR}/venv/bin/pip" install --quiet "${INSTALL_DIR}"
     ok "Dependencies updated"
 }
 
@@ -216,11 +224,11 @@ verify() {
     echo -e "\n${BOLD}[5/5] Verification${NC}"
 
     if [[ -f "${CONFIG_DIR}/config.yaml" ]]; then
-        if php "${INSTALL_DIR}/bin/serverlens" validate-config --config "${CONFIG_DIR}/config.yaml" &>/dev/null; then
+        if "${INSTALL_DIR}/venv/bin/python" -m serverlens validate-config --config "${CONFIG_DIR}/config.yaml" &>/dev/null; then
             ok "Configuration is valid"
         else
-            warn "Configuration is invalid — new settings may have been added"
-            warn "Check: php ${INSTALL_DIR}/bin/serverlens validate-config --config ${CONFIG_DIR}/config.yaml"
+            warn "Configuration validation failed — new settings may have been added"
+            warn "Check: serverlens validate-config --config ${CONFIG_DIR}/config.yaml"
         fi
     fi
 
@@ -238,8 +246,6 @@ verify() {
         fi
     fi
 
-    local version
-    version=$(php "${INSTALL_DIR}/bin/serverlens" --version 2>/dev/null || echo "n/a")
     local commit
     commit=$(cd "$SCRIPT_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "n/a")
 
@@ -250,7 +256,7 @@ verify() {
     echo ""
     echo -e "  Commit:       ${CYAN}${commit}${NC}"
     echo -e "  Config:       ${CYAN}${CONFIG_DIR}/config.yaml${NC} (unchanged)"
-    echo -e "  Binary:       ${CYAN}${INSTALL_DIR}/bin/serverlens${NC}"
+    echo -e "  Application:  ${CYAN}${INSTALL_DIR}/venv/bin/python -m serverlens${NC}"
     echo ""
 }
 

@@ -1,2 +1,0 @@
-[console_scripts]
-serverlens = serverlens.__main__:main

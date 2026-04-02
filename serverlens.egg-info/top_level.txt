@@ -1,2 +1,0 @@
-serverlens
-serverlens_mcp
