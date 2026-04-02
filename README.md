@@ -64,7 +64,7 @@ Nothing is accessible by default. Every log file, config, database table, and fi
 
 | Component | Where | What it does |
 |-----------|-----|------------|
-| **ServerLens** (`src/`) | Remote server | Read-only access to logs, configs, DB, system information |
+| **ServerLens** (`serverlens/`) | Remote server | Read-only access to logs, configs, DB, system information |
 | **MCP proxy** (`mcp-client/`) | Developer machine | Local MCP server: dispatch model (`serverlens_list` / `serverlens_call`), auto-reconnect on disconnect, built-in SSH keepalive |
 
 The LLM tool does not talk SSH directly — it speaks to the local MCP proxy, which connects to servers on its own.
@@ -110,4 +110,6 @@ On the server, all ServerLens read-only tools remain available (logs, configs, D
 
 ## Stack
 
-PHP 8.1+, ReactPHP, Symfony YAML, PDO PostgreSQL
+**Server:** Python 3.10+, aiohttp, PyYAML, psycopg2, argon2-cffi
+
+**MCP proxy:** PHP 8.1+, Symfony YAML

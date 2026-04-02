@@ -5,8 +5,7 @@
 
 ## Requirements
 
-- **PHP 8.1+** with extensions: `pdo_pgsql`, `json`, `mbstring`
-- **Composer** (for dependency installation)
+- **Python 3.10+** with `venv` and `pip`
 - **SSH access** to the server
 - **PostgreSQL** (for the DbQuery module, optional)
 
@@ -25,9 +24,9 @@ sudo bash scripts/install.sh
 > Clone into the home directory — `/opt` is owned by root. The script copies files into `/opt/serverlens` itself.
 
 The installer does everything in one pass:
-- Checks PHP (version >= 8.1, extensions)
+- Checks Python (version >= 3.10, venv, pip)
 - Creates system user `serverlens`
-- Copies files to `/opt/serverlens`, runs `composer install`
+- Copies files to `/opt/serverlens`, creates a virtual environment, installs dependencies
 - Creates directories `/etc/serverlens`, `/var/log/serverlens`
 - **Runs an interactive setup wizard:**
   - Scans installed services (nginx, PostgreSQL, Redis, PHP-FPM, Docker, RabbitMQ...)
@@ -47,9 +46,10 @@ sudo bash scripts/install.sh --no-wizard
 ```bash
 git clone git@github.com:yourorg/serverlens.git ~/serverlens-src
 sudo mkdir -p /opt/serverlens /etc/serverlens /var/log/serverlens
-sudo cp -r ~/serverlens-src/src/ ~/serverlens-src/bin/ ~/serverlens-src/composer.json /opt/serverlens/
-cd /opt/serverlens && sudo composer install --no-dev --optimize-autoloader
-sudo chmod +x /opt/serverlens/bin/serverlens
+sudo cp -r ~/serverlens-src/serverlens/ ~/serverlens-src/pyproject.toml ~/serverlens-src/requirements.txt /opt/serverlens/
+cd /opt/serverlens
+sudo python3 -m venv venv
+sudo ./venv/bin/pip install .
 sudo cp ~/serverlens-src/config.example.yaml /etc/serverlens/config.yaml
 ```
 
@@ -102,7 +102,7 @@ auth:
 Token generation:
 
 ```bash
-php bin/serverlens token generate
+serverlens token generate
 ```
 
 Output:
@@ -292,10 +292,10 @@ system:
 
 ```bash
 # SSE transport
-php bin/serverlens serve --config /etc/serverlens/config.yaml
+serverlens serve --config /etc/serverlens/config.yaml
 
 # Stdio transport (used by MCP client over SSH)
-php bin/serverlens serve --config /etc/serverlens/config.yaml --stdio
+serverlens serve --config /etc/serverlens/config.yaml --stdio
 ```
 
 ### Via systemd (production)
@@ -312,16 +312,16 @@ sudo systemctl status serverlens   # check status
 
 ```bash
 # Start server
-php bin/serverlens serve [--config <path>] [--stdio]
+serverlens serve [--config <path>] [--stdio]
 
 # Generate token
-php bin/serverlens token generate
+serverlens token generate
 
 # Hash token (for manual config entry)
-php bin/serverlens token hash <token>
+serverlens token hash <token>
 
 # Validate configuration
-php bin/serverlens validate-config [--config <path>]
+serverlens validate-config [--config <path>]
 ```
 
 ---

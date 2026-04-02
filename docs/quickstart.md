@@ -33,9 +33,9 @@ sudo bash scripts/install.sh
 ```
 
 The installer does everything in one pass:
-1. Checks PHP (version and extensions)
+1. Checks Python (version 3.10+, venv, pip)
 2. Creates the `serverlens` system user and directories
-3. Installs dependencies (Composer)
+3. Copies files to `/opt/serverlens`, creates a virtual environment, installs dependencies via pip
 4. **Runs the setup wizard:**
    - Scans installed services (nginx, PostgreSQL, Redis, PHP-FPM, Docker…)
    - Shows discovered log files and configs — you pick what you need
@@ -59,9 +59,11 @@ Installs everything but copies `config.example.yaml` without interaction. You mu
 
 ```bash
 sudo mkdir -p /opt/serverlens /etc/serverlens /var/log/serverlens
-sudo cp -r src/ bin/ composer.json /opt/serverlens/
-cd /opt/serverlens && sudo composer install --no-dev --optimize-autoloader
-sudo chmod +x /opt/serverlens/bin/serverlens
+sudo cp -r ~/serverlens-src/serverlens/ ~/serverlens-src/pyproject.toml ~/serverlens-src/requirements.txt /opt/serverlens/
+sudo cp ~/serverlens-src/config.example.yaml /opt/serverlens/
+cd /opt/serverlens
+sudo python3 -m venv venv
+sudo ./venv/bin/pip install .
 sudo cp ~/serverlens-src/config.example.yaml /etc/serverlens/config.yaml
 sudo nano /etc/serverlens/config.yaml   # fill in manually
 ```
@@ -144,17 +146,16 @@ Test **as the SSH user** (the one the MCP client will use):
 
 ```bash
 # Validate config:
-php /opt/serverlens/bin/serverlens validate-config \
-  --config /etc/serverlens/config.yaml
+serverlens validate-config --config /etc/serverlens/config.yaml
 
 # Quick stdio test (Ctrl+C to exit):
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | \
-  php /opt/serverlens/bin/serverlens serve --config /etc/serverlens/config.yaml --stdio
+  serverlens serve --config /etc/serverlens/config.yaml --stdio
 ```
 
-You should get JSON with `"serverInfo":{"name":"ServerLens","version":"1.0.0"}`.
+You should get JSON with `"serverInfo":{"name":"ServerLens","version":"2.0.0"}`.
 
-> If you see `File ... cannot be read` — the SSH user is not in the `serverlens` group (see step 2 — “SSH user permissions”).
+> If you see `File ... cannot be read` — the SSH user is not in the `serverlens` group (see step 2 — "SSH user permissions").
 
 > **Note:** the systemd service (`systemctl start serverlens`) is only needed for SSE mode. For MCP over SSH you **do not** need to start the service — the MCP client launches ServerLens on connect.
 
@@ -197,9 +198,8 @@ servers:
       port: 22
       key: "~/.ssh/id_ed25519"       # path to SSH key ON YOUR MACHINE
     remote:
-      php: "php"                      # PHP path ON THE REMOTE SERVER
-      serverlens_path: "/opt/serverlens/bin/serverlens"  # ServerLens path ON THE SERVER
-      config_path: "/etc/serverlens/config.yaml"         # config path ON THE SERVER
+      serverlens_path: "/opt/serverlens/bin/serverlens"
+      config_path: "/etc/serverlens/config.yaml"
 ```
 
 > **Multiple servers?** Add another block with a different name:
@@ -210,7 +210,6 @@ servers:
 >       user: "deploy"
 >       key: "~/.ssh/id_ed25519"
 >     remote:
->       php: "php"
 >       serverlens_path: "/opt/serverlens/bin/serverlens"
 >       config_path: "/etc/serverlens/config.yaml"
 > ```
@@ -218,7 +217,7 @@ servers:
 Verify SSH works:
 
 ```bash
-ssh -i ~/.ssh/id_ed25519 deploy@1.2.3.4 "php /opt/serverlens/bin/serverlens validate-config --config /etc/serverlens/config.yaml"
+ssh -i ~/.ssh/id_ed25519 deploy@1.2.3.4 "serverlens validate-config --config /etc/serverlens/config.yaml"
 ```
 
 ---
@@ -277,7 +276,7 @@ Restart Cursor. In MCP logs (Output → MCP) you should see:
 [MCP] Config: /Users/.../.serverlens/config.yaml
 [MCP] Server filter: production                     ← only with --servers
 [MCP] Connecting to server 'production'...
-[MCP:production] Initialized: ServerLens v1.0.0
+[MCP:production] Initialized: ServerLens v2.0.0
 [MCP] Discovered 17 tools on 'production'
 [MCP] Ready: 1 server(s), 17 remote tool(s), 2 MCP tools
 ```
@@ -293,38 +292,11 @@ SSH in and go to the source directory:
 ```bash
 ssh user@1.2.3.4
 cd ~/serverlens-src
+git pull
+sudo bash scripts/install.sh --no-wizard
 ```
 
-**Recommended** (git pull as normal user + update as root):
-
-```bash
-git pull                                # as normal user
-sudo bash scripts/update.sh --no-pull   # as root
-```
-
-**If the server has direct Git access**, you can use one command:
-
-```bash
-sudo bash scripts/update.sh
-```
-
-The script will:
-1. Run `git pull` (detects repo owner and runs as that user)
-2. Copy updated files (`src/`, `bin/`, `composer.json`) to `/opt/serverlens/`
-3. Refresh PHP dependencies (`composer install`)
-4. Update the systemd unit if it changed
-5. Validate the config
-
-**`/etc/serverlens/config.yaml` is not touched** — your settings stay.
-
-Flags:
-- `--no-pull` — skip `git pull` (if you already updated manually)
-- `--restart` — restart the systemd service after update
-
-```bash
-# If the service is running (SSE mode), restart automatically:
-sudo bash scripts/update.sh --restart --no-pull
-```
+The installer is idempotent — it will update files in `/opt/serverlens`, rebuild the venv if needed, and leave your `config.yaml` untouched.
 
 > For SSH+stdio you do not need to restart the service — the MCP client starts ServerLens on each connection, so new code is picked up automatically.
 
@@ -343,10 +315,10 @@ Restart Cursor so the MCP client picks up changes.
 ## Done
 
 You can phrase requests in **natural language** — Cursor will call `serverlens_list` / `serverlens_call` with the right server and tool. Examples:
-- *“Show the latest nginx errors”*
-- *“How many users registered in March?”*
-- *“What is the status of Docker containers?”*
-- *“Show PostgreSQL configuration”*
+- *"Show the latest nginx errors"*
+- *"How many users registered in March?"*
+- *"What is the status of Docker containers?"*
+- *"Show PostgreSQL configuration"*
 
 ---
 

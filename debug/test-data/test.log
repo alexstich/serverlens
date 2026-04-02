@@ -1,8 +1,0 @@
-[2026-03-25 10:00:01] INFO: Server started
-[2026-03-25 10:01:15] INFO: Request GET /api/users 200 23ms
-[2026-03-25 10:02:33] ERROR: Connection timeout to upstream
-[2026-03-25 10:03:44] WARN: High memory usage 89%
-[2026-03-25 10:05:22] INFO: Request POST /api/auth 200 45ms
-[2026-03-25 10:06:11] ERROR: Database connection lost
-[2026-03-25 10:07:00] INFO: Database reconnected
-[2026-03-25 10:08:15] INFO: Request GET /api/health 200 5ms

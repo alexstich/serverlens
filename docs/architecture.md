@@ -40,7 +40,7 @@
 │   │  │                   │    │                                        │   │ │
 │   │  └──────────────────┘    │  ┌──────────┐ ┌──────────────┐        │   │ │
 │   │                           │  │ DbQuery  │ │ SystemInfo   │        │   │ │
-│   │  ┌──────────────────┐    │  │ (PDO)    │ │ (shell_exec) │        │   │ │
+│   │  ┌──────────────────┐    │  │(psycopg2)│ │ (subprocess) │        │   │ │
 │   │  │  Rate Limiter     │    │  └──────────┘ └──────────────┘        │   │ │
 │   │  │  Audit Logger     │    └────────────────────────────────────────┘   │ │
 │   │  └──────────────────┘                                                  │ │
@@ -205,38 +205,49 @@ MCP client ←HTTP SSE→ ServerLens (via SSH tunnel)
 ```
 serverlens/
 ├── README.md
-├── description.md              # Original description
 │
-├── src/                        # Server (ServerLens)
-│   ├── Application.php
-│   ├── Config.php
-│   ├── Mcp/
-│   │   ├── Server.php          # MCP protocol
-│   │   └── Tool.php
-│   ├── Transport/
-│   │   ├── TransportInterface.php
-│   │   ├── SseTransport.php    # SSE (ReactPHP)
-│   │   └── StdioTransport.php  # stdio
-│   ├── Auth/
-│   │   ├── TokenAuth.php       # Bearer token (argon2id)
-│   │   └── RateLimiter.php
-│   ├── Module/
-│   │   ├── ModuleInterface.php
-│   │   ├── LogReader.php       # Logs
-│   │   ├── ConfigReader.php    # Configs
-│   │   ├── DbQuery.php         # PostgreSQL
-│   │   └── SystemInfo.php      # System information
-│   ├── Security/
-│   │   ├── PathGuard.php       # Path traversal protection
-│   │   └── Redactor.php        # Secret redaction
-│   └── Audit/
-│       └── AuditLogger.php
+├── serverlens/                 # Server (ServerLens, Python)
+│   ├── __init__.py
+│   ├── __main__.py             # Entry point
+│   ├── application.py
+│   ├── config.py
+│   ├── mcp/
+│   │   ├── server.py           # MCP protocol
+│   │   └── tool.py
+│   ├── transport/
+│   │   ├── base.py
+│   │   ├── sse.py              # SSE (aiohttp)
+│   │   └── stdio.py            # stdio
+│   ├── auth/
+│   │   ├── token_auth.py       # Bearer token (argon2id)
+│   │   └── rate_limiter.py
+│   ├── module/
+│   │   ├── base.py
+│   │   ├── log_reader.py       # Logs
+│   │   ├── config_reader.py    # Configs
+│   │   ├── db_query.py         # PostgreSQL
+│   │   └── system_info.py      # System information
+│   ├── security/
+│   │   ├── path_guard.py       # Path traversal protection
+│   │   └── redactor.py         # Secret redaction
+│   └── audit/
+│       └── audit_logger.py
 │
-├── bin/serverlens              # Server CLI
-├── composer.json               # Server dependencies
+├── serverlens_mcp/             # Python MCP proxy (alternative)
+│   ├── __main__.py
+│   ├── config.py
+│   ├── mcp_proxy.py
+│   └── ssh_connection.py
+│
+├── pyproject.toml              # Server dependencies (Python)
+├── requirements.txt
 ├── config.example.yaml         # Example server config
 │
-├── mcp-client/                 # MCP client (developer machine)
+├── src/                        # Server (PHP, legacy)
+├── bin/serverlens              # Server CLI (PHP, legacy)
+├── composer.json               # Server dependencies (PHP)
+│
+├── mcp-client/                 # MCP proxy (developer machine, PHP)
 │   ├── src/
 │   │   ├── Config.php
 │   │   ├── SshConnection.php   # SSH connection
@@ -255,7 +266,10 @@ serverlens/
 │
 ├── scripts/
 │   ├── install.sh              # Server install
-│   └── setup_db_users.sql      # PostgreSQL SQL
+│   ├── uninstall.sh            # Server uninstall
+│   ├── setup_db.sh             # PostgreSQL setup
+│   ├── setup_db_users.sql      # PostgreSQL SQL template
+│   └── change_db_password.sh   # DB password rotation
 │
 └── etc/
     └── serverlens.service      # systemd unit
@@ -265,13 +279,22 @@ serverlens/
 
 ## Technology stack
 
+### Server (remote)
+
 | Piece | Technology | Rationale |
 |-------|------------|-----------|
-| Language | **PHP 8.1+** | Widely available, no extra runtime |
-| MCP | **JSON-RPC 2.0** (hand-rolled) | Few dependencies, full control |
-| HTTP (SSE) | **ReactPHP** | Async PHP for long-lived SSE |
-| Configuration | **Symfony YAML** | Standard YAML parser for PHP |
-| Database | **PDO + pdo_pgsql** | Built into PHP, prepared statements |
-| SSH | **openssh-client** (via proc_open) | Standard SSH, no PHP extensions |
-| Hashing | **password_hash (ARGON2ID)** | Built into PHP 7.2+, secure |
+| Language | **Python 3.10+** | Modern async, type hints, wide availability |
+| MCP | **JSON-RPC 2.0** | Standard MCP protocol |
+| HTTP (SSE) | **aiohttp** | Async HTTP for long-lived SSE |
+| Configuration | **PyYAML** | Standard YAML parser for Python |
+| Database | **psycopg2** | PostgreSQL adapter, parameterized queries |
+| Hashing | **argon2-cffi** | Argon2id token hashing |
 | Process manager | **systemd** | Standard Linux service management |
+
+### MCP proxy (developer machine)
+
+| Piece | Technology | Rationale |
+|-------|------------|-----------|
+| Language | **PHP 8.1+** | Lightweight stdio proxy |
+| Configuration | **Symfony YAML** | YAML config parsing |
+| SSH | **openssh-client** (via proc_open) | Standard SSH, no PHP extensions |
