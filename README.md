@@ -2,7 +2,43 @@
 
 **Version:** 2.0.0
 
-A secure read-only MCP tool for diagnosing remote servers. From Cursor you can read logs and configuration, run safe PostgreSQL queries, and monitor system state — all over SSH.
+A secure read-only MCP tool for diagnosing remote servers. From Cursor you can read logs and configuration, run safe base queries, and monitor system state — all over SSH.
+
+## Security model
+
+ServerLens is designed so that an AI model (Claude, GPT, etc.) working through Cursor **cannot harm your server in any way**. This is achieved at every level of the architecture:
+
+### SSH — standard developer access
+
+The connection between your machine and the server uses ordinary SSH with key authentication — the same mechanism developers use daily. No new ports, no custom protocols, no additional attack surface. If your SSH access is already secure, ServerLens adds nothing to worry about.
+
+### Strict read-only on the server
+
+ServerLens on the server operates exclusively in **read-only** mode:
+
+- **Logs** — tail, search, count. No writing, no deletion, no rotation.
+- **Configs** — read only, with automatic redaction of secrets (passwords, tokens, API keys are replaced with `[REDACTED]`).
+- **Database** — only `SELECT` queries through a structured API. No raw SQL — the model cannot execute `UPDATE`, `DELETE`, `DROP`, or any DDL. Queries are parameterized and limited to whitelisted tables and fields.
+- **System** — read-only metrics: CPU, RAM, disk, service status, process list. No ability to start, stop, or restart anything.
+
+### MCP protocol — the model is sandboxed
+
+The AI model in Cursor does not have direct access to SSH, the filesystem, or the database. It can only call two MCP tools (`serverlens_list` and `serverlens_call`), and each call is routed through ServerLens which enforces the read-only whitelist. Even if the model attempts something unexpected, the server-side agent simply has no write operations available.
+
+### Whitelist-only access
+
+Nothing is accessible by default. Every log file, config, database table, and field must be explicitly listed in the server config (`/etc/serverlens/config.yaml`). If it's not in the whitelist, it doesn't exist for the model.
+
+### Summary
+
+| Layer | Protection |
+|-------|-----------|
+| Network | SSH with key auth — standard, proven, no extra ports |
+| Transport | MCP over stdio — no HTTP endpoints, no open ports on the server |
+| Server agent | Read-only by design — no write/modify/delete operations exist in the code |
+| Database | Structured queries only, whitelisted tables/fields, no raw SQL |
+| Configs | Automatic secret redaction (`[REDACTED]`) |
+| Access scope | Explicit whitelist — only what you allow in `config.yaml` |
 
 ## How it works
 
@@ -48,14 +84,6 @@ In Cursor you see **two** proxy tools; remote operations go through them:
 | `serverlens_call` | Invoke: `{ "server": "my-server", "tool": "db_query", "arguments": { ... } }` |
 
 On the server, all ServerLens read-only tools remain available (logs, configs, DB, system) — see [API Reference](docs/server/api.md). **LogReader** supports `type: "directory"` sources with glob patterns.
-
-## Security
-
-- **SSH keys** — authentication via standard SSH
-- **Whitelist** — access only to explicitly allowed files, tables, fields
-- **No raw SQL** — only structured, parameterized queries
-- **Secret redaction** — passwords, keys, and tokens are masked automatically
-- **Read-only** — ServerLens cannot modify data
 
 ## Documentation
 
