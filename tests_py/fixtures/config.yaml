@@ -1,0 +1,40 @@
+server:
+  host: "127.0.0.1"
+  port: 9600
+  transport: "stdio"
+
+auth:
+  tokens: []
+  max_failed_attempts: 3
+  lockout_minutes: 1
+
+rate_limiting:
+  requests_per_minute: 10
+  max_concurrent: 2
+
+audit:
+  enabled: false
+  path: "/tmp/serverlens-test-audit.log"
+  log_params: false
+
+logs:
+  sources:
+    - name: "test_log"
+      path: "FIXTURE_PATH/test.log"
+      format: "plain"
+      max_lines: 100
+
+configs:
+  sources:
+    - name: "test_conf"
+      path: "FIXTURE_PATH/test.conf"
+      redact:
+        - "password"
+
+databases:
+  connections: []
+
+system:
+  enabled: false
+  allowed_services: []
+  allowed_docker_stacks: []

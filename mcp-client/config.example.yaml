@@ -3,52 +3,39 @@
 # ═══════════════════════════════════════════
 #
 # This file describes REMOTE servers where ServerLens is installed.
-# The MCP client (this program) runs on YOUR machine and connects
-# to servers over SSH.
+# The MCP client runs on YOUR machine and connects to servers over SSH.
+#
+# The client doesn't care how ServerLens is implemented on the server
+# (Python, PHP, Go, etc.) — it just runs `serverlens serve --stdio`
+# via SSH. The `serverlens` command is installed globally during setup.
 #
 # Setup:
 #   cp config.example.yaml ~/.serverlens/config.yaml
 #   nano ~/.serverlens/config.yaml
 
 servers:
-  # ─── Server name ───
-  # Pick any name: monitor, production, web1, staging...
-  # The server name is used in serverlens_call:
-  #   { "server": "monitor", "tool": "logs_tail", ... }
-  # and in MCP client logs.
-  monitor:
 
-    # ─── SSH connection ───
-    # Credentials for the remote server (like ssh deploy@1.2.3.4)
+  # Server name — any label you like.
+  # Used in serverlens_call: {"server": "production", "tool": "logs_tail", ...}
+  production:
     ssh:
-      host: "1.2.3.4"                # IP or hostname of the remote server
-      user: "deploy"                  # SSH user
+      host: "1.2.3.4"
+      user: "deploy"
       port: 22
-      key: "~/.ssh/id_ed25519"       # path to SSH key ON YOUR MACHINE
-      # Extra SSH options (optional).
-      # Keepalive (ServerAliveInterval=15) is built into the MCP client;
-      # use options only for your own values or other flags.
-      options:
-        ConnectTimeout: "10"
-        ServerAliveInterval: "30"
-        ServerAliveCountMax: "3"
+      key: "~/.ssh/id_ed25519"
 
-    # ─── Paths on the remote server ───
-    # Where PHP and ServerLens live on the SERVER (not on your machine)
-    remote:
-      php: "php"                                          # usually just "php"
-      serverlens_path: "/opt/serverlens/bin/serverlens"   # ServerLens install path
-      config_path: "/etc/serverlens/config.yaml"          # ServerLens config on the server
-
-  # ─── Second server example ───
-  # Uncomment and fill in if you need another:
-  #
+  # Another server — just SSH credentials, nothing else.
   # staging:
   #   ssh:
   #     host: "5.6.7.8"
   #     user: "deploy"
   #     key: "~/.ssh/id_ed25519"
-  #   remote:
-  #     php: "php"
-  #     serverlens_path: "/opt/serverlens/bin/serverlens"
-  #     config_path: "/etc/serverlens/config.yaml"
+
+  # Advanced: override the remote command (rarely needed).
+  # By default the client runs `serverlens serve --stdio`.
+  # custom:
+  #   ssh:
+  #     host: "9.10.11.12"
+  #     user: "deploy"
+  #     key: "~/.ssh/id_ed25519"
+  #   command: "/opt/serverlens/venv/bin/python -m serverlens serve --stdio --config /etc/serverlens/config.yaml"

@@ -2,11 +2,23 @@
 
 **Version:** 2.0.0
 
-A secure read-only MCP tool for diagnosing remote servers. From Cursor you can read logs and configuration, run safe base queries, and monitor system state — all over SSH.
+A secure read-only MCP server for diagnosing remote servers. Connect it to any LLM-powered tool that supports MCP — and the model gets safe access to logs, configs, database, and system metrics over SSH.
+
+### Works with any MCP-compatible tool
+
+| Tool | How to connect |
+|------|---------------|
+| **Cursor** | Add to `.cursor/mcp.json` — works out of the box |
+| **Claude Code** | Add to `.claude/settings.json` under `mcpServers` |
+| **OpenAI Codex CLI** | Add to `~/.codex/config.json` under `mcpServers` |
+| **Claude Desktop** | Add to `claude_desktop_config.json` |
+| **Any MCP client** | ServerLens uses standard MCP stdio transport |
+
+By connecting ServerLens as an MCP server, the LLM model gets the data it needs for analysis: application logs, server configs, database records, system health — without the ability to change anything.
 
 ## Security model
 
-ServerLens is designed so that an AI model (Claude, GPT, etc.) working through Cursor **cannot harm your server in any way**. This is achieved at every level of the architecture:
+ServerLens is designed so that the LLM model **cannot harm your server in any way**, regardless of which tool you use. This is achieved at every level of the architecture:
 
 ### SSH — standard developer access
 
@@ -23,7 +35,7 @@ ServerLens on the server operates exclusively in **read-only** mode:
 
 ### MCP protocol — the model is sandboxed
 
-The AI model in Cursor does not have direct access to SSH, the filesystem, or the database. It can only call two MCP tools (`serverlens_list` and `serverlens_call`), and each call is routed through ServerLens which enforces the read-only whitelist. Even if the model attempts something unexpected, the server-side agent simply has no write operations available.
+The LLM model does not have direct access to SSH, the filesystem, or the database. It can only call two MCP tools (`serverlens_list` and `serverlens_call`), and each call is routed through ServerLens which enforces the read-only whitelist. Even if the model attempts something unexpected, the server-side agent simply has no write operations available.
 
 ### Whitelist-only access
 
@@ -44,17 +56,18 @@ Nothing is accessible by default. Every log file, config, database table, and fi
 
 ```
 ┌─────────────┐    stdio    ┌──────────────────┐    SSH     ┌──────────────┐
-│   Cursor     │◄──────────►│  MCP proxy       │◄─────────►│  ServerLens   │
-│              │            │  (your machine)  │            │  (server)     │
+│  LLM tool    │◄──────────►│  MCP proxy       │◄─────────►│  ServerLens   │
+│  (Cursor,    │            │  (your machine)  │            │  (server)     │
+│  Claude Code)│            │                  │            │               │
 └─────────────┘             └──────────────────┘            └──────────────┘
 ```
 
 | Component | Where | What it does |
 |-----------|-----|------------|
 | **ServerLens** (`src/`) | Remote server | Read-only access to logs, configs, DB, system information |
-| **MCP proxy** (`mcp-client/`) | Developer machine | Local MCP server for Cursor: dispatch model (`serverlens_list` / `serverlens_call`), auto-reconnect on disconnect, built-in SSH keepalive |
+| **MCP proxy** (`mcp-client/`) | Developer machine | Local MCP server: dispatch model (`serverlens_list` / `serverlens_call`), auto-reconnect on disconnect, built-in SSH keepalive |
 
-Cursor does not talk SSH directly — it speaks to the local MCP proxy, which connects to servers on its own.
+The LLM tool does not talk SSH directly — it speaks to the local MCP proxy, which connects to servers on its own.
 
 ## Installation
 
@@ -64,7 +77,7 @@ Short sequence:
 
 1. **On the server:** clone the repo, run `scripts/install.sh`, configure `/etc/serverlens/config.yaml`
 2. **On your machine:** `cd mcp-client && composer install`, configure `~/.serverlens/config.yaml` with SSH settings
-3. **In Cursor:** add the MCP proxy to `~/.cursor/mcp.json`, restart
+3. **In your LLM tool:** add the MCP proxy to the MCP config (e.g. `.cursor/mcp.json` for Cursor), restart
 
 **Per-project server access:** use `--servers` to connect only specific servers in a project:
 
@@ -76,7 +89,7 @@ Define all servers once in `config.yaml`, then select which ones each project ne
 
 ## Tools (MCP proxy v2)
 
-In Cursor you see **two** proxy tools; remote operations go through them:
+The LLM model sees **two** proxy tools; remote operations go through them:
 
 | Tool | Purpose |
 |------------|------------|
