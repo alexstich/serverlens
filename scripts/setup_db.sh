@@ -1,46 +1,46 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# ServerLens — Интерактивная настройка PostgreSQL (setup_db.sh)
+# ServerLens — Interactive PostgreSQL Setup (setup_db.sh)
 #
-# Описание:
-#   Настраивает read-only доступ ServerLens к базам данных PostgreSQL.
-#   Скрипт выполняет:
-#     1. Подключение к PostgreSQL (peer auth или по паролю суперпользователя)
-#     2. Вывод списка баз данных с размерами и числом таблиц
-#     3. Создание read-only пользователя (по умолчанию serverlens_readonly):
-#        — default_transaction_read_only = on (запрет записи)
-#        — statement_timeout = 30s (защита от тяжёлых запросов)
-#     4. Для каждой выбранной БД:
+# Description:
+#   Configures read-only access for ServerLens to PostgreSQL databases.
+#   The script performs:
+#     1. Connecting to PostgreSQL (peer auth or superuser password)
+#     2. Listing databases with sizes and table counts
+#     3. Creating a read-only user (default: serverlens_readonly):
+#        — default_transaction_read_only = on (write protection)
+#        — statement_timeout = 30s (protection from heavy queries)
+#     4. For each selected database:
 #        — GRANT CONNECT, USAGE ON SCHEMA public
-#        — Показ таблиц с автоматическим определением чувствительных колонок
-#        — GRANT SELECT только на выбранные таблицы
-#     5. Генерацию YAML-секции databases для config.yaml
-#     6. Запись пароля в /etc/serverlens/env (SL_DB_PASS=...)
-#     7. Обновление секции databases в config.yaml (с бэкапом)
+#        — Displaying tables with automatic sensitive column detection
+#        — GRANT SELECT only on selected tables
+#     5. Generating YAML databases section for config.yaml
+#     6. Saving password to /etc/serverlens/env (SL_DB_PASS=...)
+#     7. Updating the databases section in config.yaml (with backup)
 #
-# Запуск:
+# Usage:
 #   sudo bash scripts/setup_db.sh
-#   (вызывается также из install.sh в рамках мастера настройки)
+#   (also called from install.sh during the setup wizard)
 #
-# Идемпотентен — безопасно запускать повторно:
-#   - CREATE USER проверяет pg_roles перед созданием
-#   - ALTER USER / GRANT идемпотентны в PostgreSQL
-#   - config.yaml обновляется через замену секции databases (с бэкапом)
-#   - env-файл обновляется через замену строки SL_DB_PASS
+# Idempotent — safe to run multiple times:
+#   - CREATE USER checks pg_roles before creating
+#   - ALTER USER / GRANT are idempotent in PostgreSQL
+#   - config.yaml is updated by replacing the databases section (with backup)
+#   - env file is updated by replacing the SL_DB_PASS line
 #
-# Безопасность:
-#   - Создаёт пользователя ТОЛЬКО с правами SELECT (read-only)
-#   - Пароли экранируются перед использованием в SQL и sed
-#   - При обновлении config.yaml создаёт резервную копию (.bak.YYYYMMDDHHMMSS)
-#   - Чувствительные колонки (password, token, secret и т.д.) скрываются автоматически
-#   - Env-файл получает права 640 (root:serverlens)
-#   - PGPASSWORD экспортируется только в текущий процесс
+# Security:
+#   - Creates a user with SELECT-only privileges (read-only)
+#   - Passwords are escaped before use in SQL and sed
+#   - Creates a backup (.bak.YYYYMMDDHHMMSS) when updating config.yaml
+#   - Sensitive columns (password, token, secret, etc.) are hidden automatically
+#   - Env file gets permissions 640 (root:serverlens)
+#   - PGPASSWORD is exported only to the current process
 #
-# Что НЕ делает скрипт:
-#   - Не удаляет базы данных, таблицы или существующих пользователей
-#   - Не изменяет данные в таблицах
-#   - Не меняет pg_hba.conf или postgresql.conf
-#   - Не перезапускает PostgreSQL
+# What the script does NOT do:
+#   - Does not delete databases, tables, or existing users
+#   - Does not modify data in tables
+#   - Does not change pg_hba.conf or postgresql.conf
+#   - Does not restart PostgreSQL
 # ═══════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -102,14 +102,14 @@ is_filterable_column() {
     return 1
 }
 
-# ── Подключение ──
+# -- Connection --
 
 PG_CMD=""
 PG_HOST="localhost"
 PG_PORT="5432"
 
 setup_connection() {
-    echo -e "\n${BOLD}  Подключение к PostgreSQL${NC}\n"
+    echo -e "\n${BOLD}  PostgreSQL connection${NC}\n"
 
     if [[ "$(id -u)" -eq 0 ]] && sudo -u postgres psql -t -A -c "SELECT 1" &>/dev/null 2>&1; then
         PG_CMD="sudo -u postgres psql"
@@ -118,16 +118,19 @@ setup_connection() {
         if [[ -n "$detected_port" ]]; then
             PG_PORT="$detected_port"
         fi
-        ok "Подключено через sudo -u postgres (peer auth, порт ${PG_PORT})"
+        ok "Connected via sudo -u postgres (peer auth, port ${PG_PORT})"
         return
     fi
 
-    warn "Peer-подключение не работает, нужны параметры:"
-    PG_HOST=$(ask_input "Хост" "localhost")
-    PG_PORT=$(ask_input "Порт" "5432")
-    local pg_user; pg_user=$(ask_input "Суперпользователь" "postgres")
+    warn "Peer connection failed."
+    info "Enter PostgreSQL superuser credentials to create the read-only user"
+    info "(needed once — to create the monitoring user and grant permissions):"
+    echo ""
+    PG_HOST=$(ask_input "PostgreSQL host" "localhost")
+    PG_PORT=$(ask_input "PostgreSQL port" "5432")
+    local pg_user; pg_user=$(ask_input "PostgreSQL superuser" "postgres")
 
-    echo -n "  Пароль суперпользователя: "
+    echo -n "  Superuser password: "
     read -rs pg_pass
     echo ""
 
@@ -135,9 +138,9 @@ setup_connection() {
     PG_CMD="psql -h ${PG_HOST} -p ${PG_PORT} -U ${pg_user}"
 
     if ! $PG_CMD -t -A -c "SELECT 1" &>/dev/null 2>&1; then
-        fail "Не удалось подключиться к PostgreSQL"
+        fail "Failed to connect to PostgreSQL"
     fi
-    ok "Подключено к ${PG_HOST}:${PG_PORT}"
+    ok "Connected to ${PG_HOST}:${PG_PORT}"
 }
 
 pg_exec() {
@@ -148,18 +151,18 @@ pg_exec_db() {
     $PG_CMD -t -A -d "$1" -c "$2" 2>/dev/null || true
 }
 
-# ── Выбор БД ──
+# -- Database selection --
 
 declare -a SELECTED_DBS=()
 
 select_databases() {
-    echo -e "\n${BOLD}  Доступные базы данных${NC}\n"
+    echo -e "\n${BOLD}  Available databases${NC}\n"
 
     local databases
     databases=$(pg_exec "SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres' ORDER BY datname;")
 
     if [[ -z "$databases" ]]; then
-        fail "Базы данных не найдены"
+        fail "No databases found"
     fi
 
     local idx=1
@@ -168,13 +171,13 @@ select_databases() {
         [[ -z "$dbname" ]] && continue
         local sz; sz=$(pg_exec "SELECT pg_size_pretty(pg_database_size('${dbname}'));")
         local cnt; cnt=$(pg_exec_db "$dbname" "SELECT count(*) FROM pg_tables WHERE schemaname='public';")
-        info "[${idx}] ${dbname}  (${sz:-?}, ${cnt:-?} таблиц)"
+        info "[${idx}] ${dbname}  (${sz:-?}, ${cnt:-?} tables)"
         db_list+=("$dbname")
         ((idx++))
     done <<< "$databases"
 
     echo ""
-    local sel; sel=$(ask_input "Какие БД мониторить? (all / номера через запятую / Enter — пропустить)" "all")
+    local sel; sel=$(ask_input "Which databases to monitor? (all / comma-separated numbers / Enter = all)" "all")
 
     if [[ "$sel" == "all" ]]; then
         SELECTED_DBS=("${db_list[@]}")
@@ -186,25 +189,28 @@ select_databases() {
         done
     fi
 
-    if (( ${#SELECTED_DBS[@]} == 0 )); then fail "Ни одна БД не выбрана"; fi
-    ok "Выбрано: ${SELECTED_DBS[*]}"
+    if (( ${#SELECTED_DBS[@]} == 0 )); then fail "No databases selected"; fi
+    ok "Selected: ${SELECTED_DBS[*]}"
 }
 
-# ── Создание пользователя (идемпотентно) ──
+# -- Create read-only user (idempotent) --
 
 DB_USER=""
 DB_PASS=""
 
 create_readonly_user() {
-    echo -e "\n${BOLD}  Read-only пользователь${NC}\n"
+    echo -e "\n${BOLD}  Read-only user${NC}\n"
 
-    DB_USER=$(ask_input "Имя пользователя" "serverlens_readonly")
+    info "ServerLens connects to PostgreSQL via a dedicated user"
+    info "with SELECT-only permissions. Safe for production databases."
+    echo ""
+    DB_USER=$(ask_input "PostgreSQL username for ServerLens" "serverlens_readonly")
 
     local user_exists
     user_exists=$(pg_exec "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}';")
 
     if [[ "$user_exists" == "1" ]]; then
-        ok "Пользователь '${DB_USER}' уже существует"
+        ok "User '${DB_USER}' already exists"
 
         local env_file="${CONFIG_DIR}/env"
         local existing_pass=""
@@ -212,26 +218,33 @@ create_readonly_user() {
             existing_pass=$(grep "^SL_DB_PASS=" "$env_file" 2>/dev/null | cut -d'=' -f2- || true)
         fi
 
-        if ask_yn "Обновить пароль?" "n"; then
+        info "Password is stored in ${env_file} and used by ServerLens to connect."
+        if ask_yn "Generate a new password? (current one will stop working)" "n"; then
             DB_PASS=$(openssl rand -base64 24 | tr -d '/+=')
             pg_exec "ALTER USER \"${DB_USER}\" WITH PASSWORD '$(escape_sql_password "$DB_PASS")';"
-            ok "Пароль обновлён"
+            ok "Password updated"
         elif [[ -n "$existing_pass" ]]; then
             DB_PASS="$existing_pass"
-            ok "Пароль взят из ${env_file}"
+            ok "Password loaded from ${env_file}"
         else
-            warn "Пароль не найден в ${env_file}"
-            info "После завершения запишите его вручную: SL_DB_PASS=... в ${env_file}"
+            warn "Password not found in ${env_file}"
+            info "ServerLens will not be able to connect to the database without it."
+            info "Save the password manually after the script completes:"
+            echo ""
+            echo "    echo 'SL_DB_PASS=your_password' | sudo tee -a ${env_file}"
+            echo ""
         fi
         pg_exec "ALTER USER \"${DB_USER}\" SET default_transaction_read_only = on;"
         pg_exec "ALTER USER \"${DB_USER}\" SET statement_timeout = '30s';"
-        ok "Настройки пользователя подтверждены"
+        ok "User settings confirmed"
     else
-        if ask_yn "Сгенерировать пароль?" "y"; then
+        info "A password is needed for the new user. You can generate a random one"
+        info "or set your own (the password will be saved in ${CONFIG_DIR}/env)."
+        if ask_yn "Generate a random password?" "y"; then
             DB_PASS=$(openssl rand -base64 24 | tr -d '/+=')
-            echo -e "  ${CYAN}Пароль: ${DB_PASS}${NC}"
+            echo -e "  ${CYAN}Password: ${DB_PASS}${NC}"
         else
-            echo -n "  Введите пароль: "
+            echo -n "  Enter password: "
             read -rs DB_PASS
             echo ""
         fi
@@ -239,17 +252,17 @@ create_readonly_user() {
         pg_exec "CREATE USER \"${DB_USER}\" WITH PASSWORD '$(escape_sql_password "$DB_PASS")';"
         pg_exec "ALTER USER \"${DB_USER}\" SET default_transaction_read_only = on;"
         pg_exec "ALTER USER \"${DB_USER}\" SET statement_timeout = '30s';"
-        ok "Пользователь '${DB_USER}' создан"
+        ok "User '${DB_USER}' created"
     fi
 }
 
-# ── Настройка таблиц (идемпотентно — GRANT идемпотентен в PG) ──
+# -- Configure tables (idempotent — GRANT is idempotent in PG) --
 
 YAML_OUTPUT=""
 
 configure_tables() {
     for dbname in "${SELECTED_DBS[@]}"; do
-        echo -e "\n${BOLD}${CYAN}  ══ БД: ${dbname} ══${NC}\n"
+        echo -e "\n${BOLD}${CYAN}  == DB: ${dbname} ==${NC}\n"
 
         pg_exec "GRANT CONNECT ON DATABASE \"${dbname}\" TO \"${DB_USER}\";"
         pg_exec_db "$dbname" "GRANT USAGE ON SCHEMA public TO \"${DB_USER}\";"
@@ -258,7 +271,7 @@ configure_tables() {
         tables=$(pg_exec_db "$dbname" "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename;")
 
         if [[ -z "$tables" ]]; then
-            warn "Нет таблиц в БД ${dbname}"
+            warn "No tables in database ${dbname}"
             continue
         fi
 
@@ -268,13 +281,13 @@ configure_tables() {
             [[ -z "$tname" ]] && continue
             local cnt; cnt=$(pg_exec_db "$dbname" "SELECT count(*) FROM \"${tname}\";" 2>/dev/null || echo "?")
             local cols; cols=$(pg_exec_db "$dbname" "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='${tname}';")
-            info "[${tidx}] ${tname}  (${cnt:-?} строк, ${cols:-?} колонок)"
+            info "[${tidx}] ${tname}  (${cnt:-?} rows, ${cols:-?} columns)"
             table_list+=("$tname")
             ((tidx++))
         done <<< "$tables"
 
         echo ""
-        local tsel; tsel=$(ask_input "Таблицы для мониторинга? (all / номера через запятую / Enter — пропустить)" "all")
+        local tsel; tsel=$(ask_input "Tables to monitor? (all / comma-separated numbers / Enter = all)" "all")
         [[ -z "$tsel" ]] && continue
 
         declare -a selected_tables=()
@@ -303,7 +316,9 @@ configure_tables() {
         YAML_OUTPUT+="      tables:\n"
 
         echo ""
-        local max_rows; max_rows=$(ask_input "Max rows для всех таблиц" "500")
+        info "How many rows per table to show in the UI."
+        info "More rows = more data, but slower loading."
+        local max_rows; max_rows=$(ask_input "Max rows per table" "500")
 
         local total_denied=0
 
@@ -325,10 +340,10 @@ configure_tables() {
 
             local denied_info=""
             if (( ${#denied[@]} > 0 )); then
-                denied_info=" ${RED}скрыто: ${denied[*]}${NC}"
+                denied_info=" ${RED}hidden: ${denied[*]}${NC}"
                 ((total_denied += ${#denied[@]})) || true
             fi
-            echo -e "    ${GREEN}✓${NC} ${tname} (${#allowed[@]} открыто, ${#denied[@]} скрыто)${denied_info}"
+            echo -e "    ${GREEN}✓${NC} ${tname} (${#allowed[@]} visible, ${#denied[@]} hidden)${denied_info}"
 
             YAML_OUTPUT+="        - name: \"${tname}\"\n"
             YAML_OUTPUT+="          allowed_fields: [$(printf '"%s", ' "${allowed[@]}" | sed 's/, $//')]"
@@ -355,15 +370,15 @@ configure_tables() {
         done
 
         echo ""
-        ok "БД ${dbname}: ${#selected_tables[@]} таблиц, ${total_denied} скрытых колонок"
+        ok "DB ${dbname}: ${#selected_tables[@]} tables, ${total_denied} hidden columns"
         if (( total_denied > 0 )); then
-            info "Скрытые колонки определены автоматически (password, token, secret и т.д.)"
-            info "Отредактируйте denied_fields в config.yaml при необходимости"
+            info "Hidden columns detected automatically (password, token, secret, etc.)"
+            info "Edit denied_fields in config.yaml if needed"
         fi
     done
 }
 
-# ── Запись результатов (идемпотентно) ──
+# -- Save results (idempotent) --
 
 save_env() {
     local env_file="${CONFIG_DIR}/env"
@@ -372,10 +387,10 @@ save_env() {
     if [[ -f "$env_file" ]] && grep -q "^SL_DB_PASS=" "$env_file" 2>/dev/null; then
         local escaped; escaped=$(escape_sed_replacement "$DB_PASS")
         sed -i "s|^SL_DB_PASS=.*|SL_DB_PASS=${escaped}|" "$env_file"
-        ok "Пароль обновлён в ${env_file}"
+        ok "Password updated in ${env_file}"
     else
         printf 'SL_DB_PASS=%s\n' "$DB_PASS" >> "$env_file"
-        ok "Пароль записан в ${env_file}"
+        ok "Password saved to ${env_file}"
     fi
     chmod 640 "$env_file" 2>/dev/null || true
     chown root:serverlens "$env_file" 2>/dev/null || true
@@ -385,7 +400,7 @@ update_config_yaml() {
     local cfg="${CONFIG_DIR}/config.yaml"
 
     if [[ ! -f "$cfg" ]]; then
-        warn "Файл ${cfg} не найден — вставьте YAML вручную"
+        warn "File ${cfg} not found — insert the YAML manually"
         return
     fi
 
@@ -394,7 +409,6 @@ update_config_yaml() {
 
     local tmp; tmp=$(mktemp)
 
-    # Удаляем старую секцию databases (от databases: до следующего top-level ключа или EOF)
     awk '
         BEGIN { skip = 0 }
         /^databases:/ { skip = 1; next }
@@ -402,7 +416,6 @@ update_config_yaml() {
         !skip { print }
     ' "$cfg" > "$tmp"
 
-    # Дописываем новую секцию
     {
         echo "databases:"
         echo "  connections:"
@@ -413,14 +426,14 @@ update_config_yaml() {
     chmod 640 "$cfg" 2>/dev/null || true
     chown root:serverlens "$cfg" 2>/dev/null || true
 
-    ok "config.yaml обновлён (бэкап: ${backup})"
+    ok "config.yaml updated (backup: ${backup})"
 }
 
 print_result() {
     echo -e "\n${BOLD}══════════════════════════════════════════${NC}"
-    echo -e "${BOLD}  Результат${NC}\n"
+    echo -e "${BOLD}  Result${NC}\n"
 
-    echo -e "  ${BOLD}Сгенерированный YAML:${NC}\n"
+    echo -e "  ${BOLD}Generated YAML:${NC}\n"
     echo -e "${CYAN}databases:"
     echo -e "  connections:"
     echo -e "${YAML_OUTPUT}${NC}"
@@ -429,30 +442,35 @@ print_result() {
     if [[ -n "$DB_PASS" ]]; then
         save_env
     else
-        warn "Пароль не задан — запишите его вручную в ${CONFIG_DIR}/env как SL_DB_PASS=<пароль>"
+        warn "Password not set — save it manually in ${CONFIG_DIR}/env as SL_DB_PASS=<password>"
     fi
 
     echo ""
-    if ask_yn "Обновить секцию databases в ${CONFIG_DIR}/config.yaml?" "y"; then
+    info "Database connection settings need to be saved in the ServerLens config."
+    if ask_yn "Write the databases section to ${CONFIG_DIR}/config.yaml automatically?" "y"; then
         update_config_yaml
     else
         echo ""
-        info "Вставьте YAML выше в ${CONFIG_DIR}/config.yaml вручную"
+        info "Copy the YAML block above and paste it into the config manually:"
+        echo ""
+        echo "    sudo nano ${CONFIG_DIR}/config.yaml"
+        echo ""
+        info "Add the block to the 'databases:' section at the end of the file."
     fi
 
     echo ""
-    ok "Настройка PostgreSQL завершена"
+    ok "PostgreSQL setup complete"
     echo ""
 }
 
-# ── Main ──
+# -- Main --
 
 main() {
     echo -e "\n${BOLD}╔══════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}║  ServerLens — Настройка PostgreSQL        ║${NC}"
+    echo -e "${BOLD}║  ServerLens — PostgreSQL Setup             ║${NC}"
     echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"
 
-    command -v psql &>/dev/null || fail "psql не найден. Установите: apt install postgresql-client"
+    command -v psql &>/dev/null || fail "psql not found. Install: apt install postgresql-client"
 
     setup_connection
     select_databases

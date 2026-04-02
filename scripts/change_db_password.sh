@@ -1,37 +1,37 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-# ServerLens — Смена пароля read-only пользователя PostgreSQL (change_db_password.sh)
+# ServerLens — Change PostgreSQL read-only user password (change_db_password.sh)
 #
-# Описание:
-#   Безопасно меняет пароль пользователя PostgreSQL, используемого
-#   ServerLens для read-only доступа к базам данных. Выполняет:
-#     1. Подключение к PostgreSQL (peer auth через sudo -u postgres,
-#        или по паролю суперпользователя)
-#     2. Проверку существования указанного пользователя в pg_roles
-#     3. Генерацию нового пароля (--generate или при пустом вводе)
-#        либо ввод пароля вручную
-#     4. Изменение пароля в PostgreSQL (ALTER USER ... WITH PASSWORD)
-#     5. Обновление пароля в /etc/serverlens/env (переменная SL_DB_PASS)
+# Description:
+#   Safely changes the PostgreSQL password used by ServerLens for read-only
+#   database access. It:
+#     1. Connects to PostgreSQL (peer auth via sudo -u postgres,
+#        or superuser password)
+#     2. Verifies the given user exists in pg_roles
+#     3. Generates a new password (--generate or empty input)
+#        or reads a password interactively
+#     4. Changes the password in PostgreSQL (ALTER USER ... WITH PASSWORD)
+#     5. Updates the password in /etc/serverlens/env (SL_DB_PASS)
 #
-# Запуск:
-#   sudo bash scripts/change_db_password.sh                — интерактивный режим
-#   sudo bash scripts/change_db_password.sh --user=myuser  — указать пользователя
-#   sudo bash scripts/change_db_password.sh --generate     — автогенерация пароля
-#   sudo bash scripts/change_db_password.sh --help         — справка
+# Usage:
+#   sudo bash scripts/change_db_password.sh                — interactive
+#   sudo bash scripts/change_db_password.sh --user=myuser  — specify user
+#   sudo bash scripts/change_db_password.sh --generate     — auto-generate password
+#   sudo bash scripts/change_db_password.sh --help         — help
 #
-# Безопасность:
-#   - Требует root-прав для peer-подключения к PostgreSQL
-#   - Проверяет существование пользователя перед изменением пароля
-#   - Пароли экранируются перед использованием в SQL и sed
-#   - НЕ изменяет права доступа, таблицы или другие настройки пользователя
-#   - Env-файл получает права 640 (root:serverlens)
-#   - Перезапуск ServerLens не требуется — пароль читается при каждом подключении
+# Security:
+#   - Requires root for peer connection to PostgreSQL
+#   - Verifies the user exists before changing the password
+#   - Escapes passwords for use in SQL and sed
+#   - Does NOT change privileges, tables, or other user settings
+#   - Env file gets mode 640 (root:serverlens)
+#   - ServerLens restart is not required — password is read on each connection
 #
-# Что НЕ делает скрипт:
-#   - Не создаёт и не удаляет пользователей PostgreSQL
-#   - Не изменяет GRANT-права или настройки read-only
-#   - Не трогает config.yaml
-#   - Не перезапускает PostgreSQL или ServerLens
+# What this script does NOT do:
+#   - Does not create or drop PostgreSQL users
+#   - Does not change GRANTs or read-only settings
+#   - Does not touch config.yaml
+#   - Does not restart PostgreSQL or ServerLens
 # ═══════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -47,10 +47,10 @@ for arg in "$@"; do
         --user=*)    DB_USER="${arg#*=}" ;;
         --generate)  GENERATE=true ;;
         --help|-h)
-            echo "Использование: sudo bash $0 [--user=имя] [--generate]"
+            echo "Usage: sudo bash $0 [--user=name] [--generate]"
             echo ""
-            echo "  --user=имя    Имя пользователя PostgreSQL (по умолчанию: serverlens_readonly)"
-            echo "  --generate    Сгенерировать пароль без запроса"
+            echo "  --user=name   PostgreSQL username (default: serverlens_readonly)"
+            echo "  --generate    Generate a password without prompting"
             exit 0
             ;;
     esac
@@ -68,53 +68,53 @@ escape_sed_replacement() {
     printf '%s' "$1" | sed -e 's/[&\\/|]/\\&/g'
 }
 
-echo -e "\n${BOLD}  Смена пароля PostgreSQL: ${DB_USER}${NC}\n"
+echo -e "\n${BOLD}  Change PostgreSQL password: ${DB_USER}${NC}\n"
 
-# Подключение
+# Connection
 PG_CMD=""
 if [[ "$(id -u)" -eq 0 ]] && sudo -u postgres psql -t -A -c "SELECT 1" &>/dev/null 2>&1; then
     PG_CMD="sudo -u postgres psql"
 elif command -v psql &>/dev/null; then
-    echo -n "  Пароль суперпользователя postgres: "
+    echo -n "  postgres superuser password: "
     read -rs pg_pass; echo ""
     export PGPASSWORD="$pg_pass"
-    echo -n "  Порт PostgreSQL [5432]: "
+    echo -n "  PostgreSQL port [5432]: "
     read -r pg_port
     pg_port="${pg_port:-5432}"
     PG_CMD="psql -h localhost -p ${pg_port} -U postgres"
     if ! $PG_CMD -t -A -c "SELECT 1" &>/dev/null 2>&1; then
-        fail "Не удалось подключиться к PostgreSQL"
+        fail "Could not connect to PostgreSQL"
     fi
 else
-    fail "psql не найден"
+    fail "psql not found"
 fi
 
-# Проверяем, что пользователь существует
+# Ensure user exists
 user_exists=$($PG_CMD -t -A -c "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}';" 2>/dev/null || true)
 if [[ "$user_exists" != "1" ]]; then
-    fail "Пользователь '${DB_USER}' не найден в PostgreSQL"
+    fail "User '${DB_USER}' not found in PostgreSQL"
 fi
-ok "Пользователь '${DB_USER}' найден"
+ok "User '${DB_USER}' found"
 
-# Новый пароль
+# New password
 NEW_PASS=""
 if $GENERATE; then
     NEW_PASS=$(openssl rand -base64 24 | tr -d '/+=')
-    echo -e "  ${CYAN}Новый пароль: ${NEW_PASS}${NC}"
+    echo -e "  ${CYAN}New password: ${NEW_PASS}${NC}"
 else
-    echo -n "  Новый пароль (пустое — сгенерировать): "
+    echo -n "  New password (empty — generate): "
     read -rs NEW_PASS; echo ""
     if [[ -z "$NEW_PASS" ]]; then
         NEW_PASS=$(openssl rand -base64 24 | tr -d '/+=')
-        echo -e "  ${CYAN}Сгенерирован: ${NEW_PASS}${NC}"
+        echo -e "  ${CYAN}Generated: ${NEW_PASS}${NC}"
     fi
 fi
 
-# Меняем пароль в PostgreSQL
+# Change password in PostgreSQL
 $PG_CMD -c "ALTER USER \"${DB_USER}\" WITH PASSWORD '$(escape_sql_password "$NEW_PASS")';" &>/dev/null
-ok "Пароль изменён в PostgreSQL"
+ok "Password changed in PostgreSQL"
 
-# Обновляем env-файл
+# Update env file
 ENV_FILE="${CONFIG_DIR}/env"
 mkdir -p "${CONFIG_DIR}"
 if [[ -f "$ENV_FILE" ]] && grep -q "^SL_DB_PASS=" "$ENV_FILE" 2>/dev/null; then
@@ -125,8 +125,8 @@ else
 fi
 chmod 640 "$ENV_FILE" 2>/dev/null || true
 chown root:serverlens "$ENV_FILE" 2>/dev/null || true
-ok "Пароль записан в ${ENV_FILE}"
+ok "Password written to ${ENV_FILE}"
 
 echo ""
-ok "Готово. Перезапуск ServerLens не требуется — пароль читается при каждом подключении."
+ok "Done. ServerLens restart is not required — the password is read on each connection."
 echo ""

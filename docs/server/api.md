@@ -1,31 +1,31 @@
 # ServerLens — API Reference
 
-Полный справочник по инструментам (tools), доступным через MCP-протокол.
+Complete reference for tools available through the MCP protocol.
 
-## Модель dispatch в MCP Proxy
+## Dispatch model in MCP Proxy
 
-Когда Cursor подключён через **ServerLens MCP Proxy** (`mcp-client/`), клиенту видны не отдельные удалённые tools, а два универсальных инструмента:
+When Cursor is connected via **ServerLens MCP Proxy** (`mcp-client/`), the client sees not individual remote tools but two universal tools:
 
-- **`serverlens_list`** — без аргументов: список серверов; с `{ "server": "<имя>" }`: список tools на этом сервере (аналог удалённого `tools/list`).
-- **`serverlens_call`** — единственная точка вызова: `{ "server": "<имя>", "tool": "<имя_tool>", "arguments": { ... } }`. Аргументы совпадают с описанными ниже параметрами каждого инструмента (например, для `logs_tail` — объект с `source`, `lines` и т.д.).
+- **`serverlens_list`** — no arguments: list of servers; with `{ "server": "<name>" }`: list of tools on that server (equivalent to remote `tools/list`).
+- **`serverlens_call`** — single call entry point: `{ "server": "<name>", "tool": "<tool_name>", "arguments": { ... } }`. Arguments match the parameters described below for each tool (for example, for `logs_tail` — an object with `source`, `lines`, etc.).
 
-Прямое подключение к ServerLens на сервере (stdio/SSE без прокси) по-прежнему использует имена tools из этого документа без обёртки.
+Direct connection to ServerLens on the server (stdio/SSE without the proxy) still uses the tool names from this document without wrapping.
 
-Подробнее: [Архитектура](../architecture.md) | [MCP-прокси](../../mcp-client/docs/README.md)
+See also: [Architecture](../architecture.md) | [MCP proxy](../../mcp-client/docs/README.md)
 
 ---
 
-## Логи (LogReader)
+## Logs (LogReader)
 
 ### logs_list
 
-Возвращает список доступных источников логов.
+Returns the list of available log sources.
 
-**Параметры:** нет
+**Parameters:** none
 
-Для источника с **`type: "directory"`** в конфигурации это каталог с несколькими файлами по маске: в ответе перечисляются файлы (до **50** штук, сортировка по дате изменения, новые сверху). В конфиге для такого источника поддерживается поле **`pattern`** — glob относительно каталога (по умолчанию `*.log`).
+For a source with **`type: "directory"`** in the configuration, this is a directory with multiple files matching a pattern: the response lists files (up to **50**, sorted by mtime, newest first). For such sources the config supports a **`pattern`** field — a glob relative to the directory (default `*.log`).
 
-**Пример ответа (обычные файловые источники):**
+**Example response (plain file sources):**
 ```json
 [
   {
@@ -43,7 +43,7 @@
 ]
 ```
 
-**Пример элемента списка для источника типа `directory` (`logs_list`):**
+**Example list entry for a `directory` source (`logs_list`):**
 ```json
 {
   "name": "app_logs",
@@ -60,22 +60,22 @@
 }
 ```
 
-Для чтения конкретного файла из каталога в параметре **`source`** у `logs_tail`, `logs_search`, `logs_count` (и др.) указывайте строку вида **`имя_источника/имя_файла`** (как в поле `name` у элементов `files`).
+To read a specific file from a directory, pass a string like **`source_name/filename`** in **`source`** for `logs_tail`, `logs_search`, `logs_count` (and others), as in the `name` field of `files` entries.
 
 ---
 
 ### logs_tail
 
-Возвращает последние N строк из лога.
+Returns the last N lines of a log.
 
-**Параметры:**
+**Parameters:**
 
-| Параметр | Тип | Обязательный | По умолчанию | Описание |
+| Parameter | Type | Required | Default | Description |
 |----------|-----|:---:|:---:|----------|
-| `source` | string | да | — | Имя источника лога; для источников типа `directory` — `каталог/файл`, например `app_logs/20251031.log` |
-| `lines` | integer | нет | 100 | Количество строк (макс. 500) |
+| `source` | string | yes | — | Log source name; for `directory` sources — `dir/file`, e.g. `app_logs/20251031.log` |
+| `lines` | integer | no | 100 | Number of lines (max 500) |
 
-**Пример:**
+**Example:**
 ```json
 {"source": "nginx_error", "lines": 20}
 ```
@@ -84,42 +84,42 @@
 
 ### logs_search
 
-Поиск по логу по подстроке или регулярному выражению.
+Search a log by substring or regular expression.
 
-**Параметры:**
+**Parameters:**
 
-| Параметр | Тип | Обязательный | По умолчанию | Описание |
+| Parameter | Type | Required | Default | Description |
 |----------|-----|:---:|:---:|----------|
-| `source` | string | да | — | Имя источника лога; для `directory` — `каталог/файл` |
-| `query` | string | да | — | Поисковый запрос |
-| `regex` | boolean | нет | false | Использовать regex |
-| `lines` | integer | нет | 100 | Макс. совпадений (макс. 1000) |
+| `source` | string | yes | — | Log source name; for `directory` — `dir/file` |
+| `query` | string | yes | — | Search query |
+| `regex` | boolean | no | false | Use regex |
+| `lines` | integer | no | 100 | Max matches (max 1000) |
 
-**Пример (текстовый поиск):**
+**Example (text search):**
 ```json
 {"source": "nginx_error", "query": "upstream timed out", "lines": 50}
 ```
 
-**Пример (regex):**
+**Example (regex):**
 ```json
-{"source": "app_api", "query": "status\":\\s*(4|5)\\d{2}", "regex": true, "lines": 100}
+{"source": "myapp_api", "query": "status\":\\s*(4|5)\\d{2}", "regex": true, "lines": 100}
 ```
 
-> Regex-запросы имеют таймаут 5 секунд.
+> Regex queries have a 5 second timeout.
 
 ---
 
 ### logs_count
 
-Возвращает количество строк и размер файла.
+Returns line count and file size.
 
-**Параметры:**
+**Parameters:**
 
-| Параметр | Тип | Обязательный | Описание |
+| Parameter | Type | Required | Description |
 |----------|-----|:---:|----------|
-| `source` | string | да | Имя источника лога; для `directory` — `каталог/файл` |
+| `source` | string | yes | Log source name; for `directory` — `dir/file` |
 
-**Пример ответа:**
+**Example response:**
 ```json
 {
   "source": "nginx_access",
@@ -133,39 +133,39 @@
 
 ### logs_time_range
 
-Возвращает записи лога за указанный временной период.
+Returns log entries for a time range.
 
-**Параметры:**
+**Parameters:**
 
-| Параметр | Тип | Обязательный | По умолчанию | Описание |
+| Parameter | Type | Required | Default | Description |
 |----------|-----|:---:|:---:|----------|
-| `source` | string | да | — | Имя источника лога |
-| `from` | string | да | — | Начало периода (ISO 8601 или общий формат) |
-| `to` | string | да | — | Конец периода |
-| `lines` | integer | нет | 200 | Макс. строк (макс. 1000) |
+| `source` | string | yes | — | Log source name |
+| `from` | string | yes | — | Range start (ISO 8601 or common format) |
+| `to` | string | yes | — | Range end |
+| `lines` | integer | no | 200 | Max lines (max 1000) |
 
-**Пример:**
+**Example:**
 ```json
 {"source": "nginx_error", "from": "2026-03-25 10:00:00", "to": "2026-03-25 12:00:00"}
 ```
 
-Поддерживаемые форматы дат:
+Supported date formats:
 - ISO 8601: `2026-03-25T10:00:00`
-- Стандартный: `2026-03-25 10:00:00`
+- Common: `2026-03-25 10:00:00`
 - Syslog: `Mar 25 10:00:00`
 - nginx: `25/Mar/2026:10:00:00 +0300`
 
 ---
 
-## Конфигурации (ConfigReader)
+## Configurations (ConfigReader)
 
 ### config_list
 
-Возвращает список доступных конфигурационных файлов.
+Returns the list of available configuration files.
 
-**Параметры:** нет
+**Parameters:** none
 
-**Пример ответа:**
+**Example response:**
 ```json
 [
   {"name": "nginx_main", "type": "file", "available": true},
@@ -178,30 +178,30 @@
 
 ### config_read
 
-Читает содержимое конфигурационного файла. Секреты автоматически заменяются на `[REDACTED]`.
+Reads configuration file content. Secrets are replaced with `[REDACTED]`.
 
-**Параметры:**
+**Parameters:**
 
-| Параметр | Тип | Обязательный | Описание |
+| Parameter | Type | Required | Description |
 |----------|-----|:---:|----------|
-| `source` | string | да | Имя источника конфига |
+| `source` | string | yes | Config source name |
 
-Для источников типа `directory` возвращается содержимое всех файлов в директории.
+For `directory` sources, content of all files in the directory is returned.
 
 ---
 
 ### config_search
 
-Поиск по содержимому конфигурационного файла.
+Search within configuration file content.
 
-**Параметры:**
+**Parameters:**
 
-| Параметр | Тип | Обязательный | Описание |
+| Parameter | Type | Required | Description |
 |----------|-----|:---:|----------|
-| `source` | string | да | Имя источника конфига |
-| `query` | string | да | Поисковый запрос (регистронезависимый) |
+| `source` | string | yes | Config source name |
+| `query` | string | yes | Search query (case-insensitive) |
 
-**Пример ответа:**
+**Example response:**
 ```
 23: listen 80;
 45: listen 443 ssl;
@@ -209,15 +209,15 @@
 
 ---
 
-## База данных (DbQuery)
+## Database (DbQuery)
 
 ### db_list
 
-Возвращает список баз данных, таблиц и доступных полей.
+Returns databases, tables, and allowed fields.
 
-**Параметры:** нет
+**Parameters:** none
 
-**Пример ответа:**
+**Example response:**
 ```json
 [
   {
@@ -234,48 +234,48 @@
 
 ### db_describe
 
-Описание структуры таблицы: доступные поля, фильтры, сортировка.
+Table structure: allowed fields, filters, sorting.
 
-**Параметры:**
+**Parameters:**
 
-| Параметр | Тип | Обязательный | Описание |
+| Parameter | Type | Required | Description |
 |----------|-----|:---:|----------|
-| `database` | string | да | Имя подключения к БД |
-| `table` | string | да | Имя таблицы |
+| `database` | string | yes | Database connection name |
+| `table` | string | yes | Table name |
 
 ---
 
 ### db_query
 
-Выборка записей из таблицы. Используется абстрактный формат запроса, НЕ SQL.
+Select rows from a table. Uses an abstract query format, NOT SQL.
 
-**Параметры:**
+**Parameters:**
 
-| Параметр | Тип | Обязательный | По умолчанию | Описание |
+| Parameter | Type | Required | Default | Description |
 |----------|-----|:---:|:---:|----------|
-| `database` | string | да | — | Имя подключения к БД |
-| `table` | string | да | — | Имя таблицы |
-| `fields` | string[] | нет | все разрешённые | Поля для выборки |
-| `filters` | object | нет | — | Условия фильтрации |
-| `order_by` | string[] | нет | — | Сортировка (префикс `-` для DESC) |
-| `limit` | integer | нет | 100 | Макс. строк |
-| `offset` | integer | нет | 0 | Смещение (пагинация) |
+| `database` | string | yes | — | Database connection name |
+| `table` | string | yes | — | Table name |
+| `fields` | string[] | no | all allowed | Fields to return |
+| `filters` | object | no | — | Filter conditions |
+| `order_by` | string[] | no | — | Sort order (prefix `-` for DESC) |
+| `limit` | integer | no | 100 | Max rows |
+| `offset` | integer | no | 0 | Offset (pagination) |
 
-**Операторы фильтрации:**
+**Filter operators:**
 
-| Оператор | Описание | Пример |
+| Operator | Description | Example |
 |----------|----------|--------|
-| `eq` | Равно | `{"status": {"eq": "active"}}` |
-| `neq` | Не равно | `{"status": {"neq": "deleted"}}` |
-| `gt` | Больше | `{"age": {"gt": 18}}` |
-| `gte` | Больше или равно | `{"created_at": {"gte": "2026-03-01"}}` |
-| `lt` | Меньше | `{"price": {"lt": 100}}` |
-| `lte` | Меньше или равно | `{"created_at": {"lte": "2026-03-31"}}` |
-| `in` | В списке (макс. 50) | `{"language": {"in": ["ru", "en"]}}` |
-| `like` | LIKE-поиск | `{"email": {"like": "%@gmail.com"}}` |
-| `is_null` | NULL/NOT NULL | `{"deleted_at": {"is_null": true}}` |
+| `eq` | Equals | `{"status": {"eq": "active"}}` |
+| `neq` | Not equals | `{"status": {"neq": "deleted"}}` |
+| `gt` | Greater than | `{"age": {"gt": 18}}` |
+| `gte` | Greater or equal | `{"created_at": {"gte": "2026-03-01"}}` |
+| `lt` | Less than | `{"price": {"lt": 100}}` |
+| `lte` | Less or equal | `{"created_at": {"lte": "2026-03-31"}}` |
+| `in` | In list (max 50) | `{"language": {"in": ["en", "es"]}}` |
+| `like` | LIKE search | `{"email": {"like": "%@gmail.com"}}` |
+| `is_null` | NULL / NOT NULL | `{"deleted_at": {"is_null": true}}` |
 
-**Полный пример:**
+**Full example:**
 ```json
 {
   "database": "app_prod",
@@ -291,7 +291,7 @@
 }
 ```
 
-**Пример ответа:**
+**Example response:**
 ```json
 {
   "database": "app_prod",
@@ -309,17 +309,17 @@
 
 ### db_count
 
-Количество записей, соответствующих фильтрам.
+Row count matching filters.
 
-**Параметры:**
+**Parameters:**
 
-| Параметр | Тип | Обязательный | Описание |
+| Parameter | Type | Required | Description |
 |----------|-----|:---:|----------|
-| `database` | string | да | Имя подключения к БД |
-| `table` | string | да | Имя таблицы |
-| `filters` | object | нет | Условия фильтрации |
+| `database` | string | yes | Database connection name |
+| `table` | string | yes | Table name |
+| `filters` | object | no | Filter conditions |
 
-**Пример:**
+**Example:**
 ```json
 {"database": "app_prod", "table": "users", "filters": {"is_active": {"eq": true}}}
 ```
@@ -328,17 +328,17 @@
 
 ### db_stats
 
-Базовая статистика по числовому полю: COUNT, MIN, MAX, AVG.
+Basic statistics on a numeric field: COUNT, MIN, MAX, AVG.
 
-**Параметры:**
+**Parameters:**
 
-| Параметр | Тип | Обязательный | Описание |
+| Parameter | Type | Required | Description |
 |----------|-----|:---:|----------|
-| `database` | string | да | Имя подключения к БД |
-| `table` | string | да | Имя таблицы |
-| `field` | string | да | Имя поля |
+| `database` | string | yes | Database connection name |
+| `table` | string | yes | Table name |
+| `field` | string | yes | Field name |
 
-**Пример ответа:**
+**Example response:**
 ```json
 {
   "database": "app_prod",
@@ -353,52 +353,52 @@
 
 ---
 
-## Система (SystemInfo)
+## System (SystemInfo)
 
 ### system_overview
 
-Общее состояние сервера: CPU, RAM, диск, uptime.
+Overall server state: CPU, RAM, disk, uptime.
 
-**Параметры:** нет
+**Parameters:** none
 
 ---
 
 ### system_services
 
-Статус systemd-сервисов из whitelist.
+Status of systemd services from the whitelist.
 
-**Параметры:**
+**Parameters:**
 
-| Параметр | Тип | Обязательный | Описание |
+| Parameter | Type | Required | Description |
 |----------|-----|:---:|----------|
-| `service` | string | нет | Конкретный сервис (если не указан — все из whitelist) |
+| `service` | string | no | Specific service (if omitted — all from whitelist) |
 
 ---
 
 ### system_docker
 
-Статус Docker-контейнеров из разрешённых стеков.
+Status of Docker containers from allowed stacks.
 
-**Параметры:**
+**Parameters:**
 
-| Параметр | Тип | Обязательный | Описание |
+| Parameter | Type | Required | Description |
 |----------|-----|:---:|----------|
-| `stack` | string | нет | Конкретный стек (если не указан — все из whitelist) |
+| `stack` | string | no | Specific stack (if omitted — all from whitelist) |
 
 ---
 
 ### system_connections
 
-Количество активных соединений (PostgreSQL, RabbitMQ, TCP).
+Count of active connections (PostgreSQL, RabbitMQ, TCP).
 
-Для RabbitMQ считаются оба направления:
-- `rabbitmq_incoming` — входящие (локальный RabbitMQ обслуживает клиентов, `sport = :5672`)
-- `rabbitmq_outgoing` — исходящие (локальные воркеры подключены к удалённому RabbitMQ, `dport = :5672`)
-- `rabbitmq_connections` — сумма входящих и исходящих
+For RabbitMQ both directions are counted:
+- `rabbitmq_incoming` — incoming (local RabbitMQ serving clients, `sport = :5672`)
+- `rabbitmq_outgoing` — outgoing (local workers connected to remote RabbitMQ, `dport = :5672`)
+- `rabbitmq_connections` — sum of incoming and outgoing
 
-**Параметры:** нет
+**Parameters:** none
 
-**Пример ответа:**
+**Example response:**
 ```json
 {
   "postgresql_active": 3,
@@ -414,18 +414,18 @@
 
 ### system_processes
 
-Список процессов с сортировкой по CPU или памяти (аналог htop/top).
+Process list sorted by CPU or memory (like htop/top).
 
-**Параметры:**
+**Parameters:**
 
-| Параметр | Тип | Обязательный | По умолчанию | Описание |
+| Parameter | Type | Required | Default | Description |
 |----------|-----|:---:|:---:|----------|
-| `sort_by` | string | нет | `cpu` | Сортировка: `cpu` или `memory` |
-| `limit` | integer | нет | 20 | Количество процессов (макс. 100) |
-| `user` | string | нет | — | Фильтр по имени пользователя ОС |
-| `filter` | string | нет | — | Фильтр по подстроке в имени команды (регистронезависимый) |
+| `sort_by` | string | no | `cpu` | Sort: `cpu` or `memory` |
+| `limit` | integer | no | 20 | Number of processes (max 100) |
+| `user` | string | no | — | Filter by OS username |
+| `filter` | string | no | — | Filter by substring in command name (case-insensitive) |
 
-**Примеры:**
+**Examples:**
 ```json
 {"sort_by": "memory", "limit": 10}
 ```
@@ -438,7 +438,7 @@
 {"user": "www-data", "sort_by": "cpu"}
 ```
 
-**Пример ответа:**
+**Example response:**
 ```json
 {
   "sort_by": "cpu",
@@ -454,7 +454,7 @@
       "rss_kb": 131072,
       "stat": "Sl",
       "time": "12:34:56",
-      "command": "php /var/www/app/artisan queue:work"
+      "command": "php /var/www/myapp/artisan queue:work"
     }
   ]
 }

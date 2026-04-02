@@ -5,7 +5,7 @@
 server:
   host: "127.0.0.1"
   port: 9600
-  transport: "sse"          # "sse" или "stdio"
+  transport: "sse"          # "sse" or "stdio"
 
 auth:
   tokens:
@@ -47,8 +47,8 @@ logs:
       format: "postgres"
       max_lines: 2000
 
-    # Логи в директории (автоматический листинг файлов)
-    # Удобно для логов с ежедневной ротацией
+    # Logs in a directory (automatic file listing)
+    # Handy for logs with daily rotation
     # - name: "app_api_logs"
     #   path: "/var/www/app/runtime/logs/api"
     #   type: "directory"
