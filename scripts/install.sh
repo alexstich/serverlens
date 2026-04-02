@@ -4,11 +4,11 @@
 #
 # Description:
 #   Full installation of ServerLens on a server. The script performs:
-#     1. System requirements check (PHP 8.1+, extensions: json, mbstring)
+#     1. System requirements check (Python 3.10+, venv, pip)
 #     2. Creating system user 'serverlens' (no login shell)
 #     3. Creating directories: /opt/serverlens, /etc/serverlens, /var/log/serverlens
-#     4. Copying project files (src/, bin/, composer.json) to /opt/serverlens
-#     5. Installing PHP dependencies via Composer (--no-dev)
+#     4. Copying project files (serverlens/, pyproject.toml, requirements.txt) to /opt/serverlens
+#     5. Creating Python venv and installing dependencies via pip
 #     6. Interactive setup wizard:
 #        — auto-detection of services (nginx, postgresql, mysql, redis, etc.)
 #        — scanning logs and configuration files
@@ -27,7 +27,7 @@
 #   - All ServerLens config files get permissions 640 (root:serverlens)
 #   - The setup wizard only READS discovered logs/configs, modifies nothing
 #   - Idempotent: safe to run multiple times (useradd checks existence)
-#   - Composer is installed only if missing (from official source)
+#   - Python venv is created if missing
 #
 # What the script does NOT do:
 #   - Does not remove any system packages or users
@@ -413,7 +413,7 @@ wizard_logs() {
                 [[ -n "${seen_logs[$fwlog]:-}" ]] && continue
                 seen_logs[$fwlog]=1
                 local appdir appname logbase fwname
-                appdir=$(echo "$fwlog" | sed -E 's|/(runtime|storage|var|wp-content|tmp|writable|\.next|\.output)/.*||; s|/logs?/[^/]*$||; s|/log/[^/]*$||')
+                appdir=$(echo "$fwlog" | sed -E 's#/(runtime|storage|var|wp-content|tmp|writable|\.next|\.output)/.*##; s#/logs?/[^/]*$##; s#/log/[^/]*$##')
                 appname=$(basename "$appdir")
                 logbase=$(basename "$fwlog" .log)
                 fwname="${fw}_${appname}_${logbase}"
@@ -889,27 +889,36 @@ phase_checks() {
 
     [[ "$(id -u)" -ne 0 ]] && fail "Run as root: sudo bash scripts/install.sh"
 
-    command -v php &>/dev/null || fail "PHP not found. Install PHP 8.1+"
-
-    local php_major php_minor
-    php_major=$(php -r 'echo PHP_MAJOR_VERSION;')
-    php_minor=$(php -r 'echo PHP_MINOR_VERSION;')
-
-    if (( php_major < 8 || (php_major == 8 && php_minor < 1) )); then fail "PHP 8.1+ required, found ${php_major}.${php_minor}"; fi
-    ok "PHP ${php_major}.${php_minor}"
-
-    for ext in json mbstring; do
-        if php -r "if(!extension_loaded('${ext}')) exit(1);" 2>/dev/null; then
-            ok "ext-${ext}"
-        else
-            fail "Missing extension: ${ext}"
+    local python_cmd=""
+    for cmd in python3 python; do
+        if command -v "$cmd" &>/dev/null; then
+            python_cmd="$cmd"
+            break
         fi
     done
+    [[ -z "$python_cmd" ]] && fail "Python not found. Install Python 3.10+"
 
-    if php -r "if(!extension_loaded('pdo_pgsql')) exit(1);" 2>/dev/null; then
-        ok "ext-pdo_pgsql"
+    local py_version
+    py_version=$($python_cmd -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    local py_major py_minor
+    py_major=$($python_cmd -c 'import sys; print(sys.version_info.major)')
+    py_minor=$($python_cmd -c 'import sys; print(sys.version_info.minor)')
+
+    if (( py_major < 3 || (py_major == 3 && py_minor < 10) )); then
+        fail "Python 3.10+ required, found ${py_version}"
+    fi
+    ok "Python ${py_version}"
+
+    if $python_cmd -c 'import venv' 2>/dev/null; then
+        ok "venv module"
     else
-        warn "ext-pdo_pgsql not found (only needed for the database module)"
+        fail "Python venv module not found. Install: apt install python3-venv"
+    fi
+
+    if $python_cmd -c 'import pip' 2>/dev/null; then
+        ok "pip module"
+    else
+        warn "pip not found — will attempt install via ensurepip"
     fi
 }
 
@@ -938,23 +947,33 @@ phase_directories() {
 
 phase_copy_files() {
     echo -e "\n${BOLD}[4/7] Copying files${NC}"
-    cp -r "${SCRIPT_DIR}/src" "${INSTALL_DIR}/"
-    cp -r "${SCRIPT_DIR}/bin" "${INSTALL_DIR}/"
-    cp "${SCRIPT_DIR}/composer.json" "${INSTALL_DIR}/"
-    cp "${SCRIPT_DIR}/composer.lock" "${INSTALL_DIR}/" 2>/dev/null || true
-    chmod +x "${INSTALL_DIR}/bin/serverlens"
+    cp -r "${SCRIPT_DIR}/serverlens" "${INSTALL_DIR}/"
+    cp "${SCRIPT_DIR}/pyproject.toml" "${INSTALL_DIR}/"
+    cp "${SCRIPT_DIR}/requirements.txt" "${INSTALL_DIR}/"
+    cp "${SCRIPT_DIR}/config.example.yaml" "${INSTALL_DIR}/" 2>/dev/null || true
     ok "Files copied to ${INSTALL_DIR}"
 }
 
 phase_dependencies() {
-    echo -e "\n${BOLD}[5/7] PHP dependencies${NC}"
-    if ! command -v composer &>/dev/null; then
-        info "Installing Composer..."
-        curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer 2>/dev/null
+    echo -e "\n${BOLD}[5/7] Python dependencies${NC}"
+
+    local python_cmd=""
+    for cmd in python3 python; do
+        if command -v "$cmd" &>/dev/null; then
+            python_cmd="$cmd"
+            break
+        fi
+    done
+
+    if [[ ! -d "${INSTALL_DIR}/venv" ]]; then
+        $python_cmd -m venv "${INSTALL_DIR}/venv"
+        ok "Virtual environment created"
+    else
+        ok "Virtual environment exists"
     fi
-    ok "Composer found"
-    cd "${INSTALL_DIR}"
-    composer install --no-dev --optimize-autoloader --no-interaction --quiet
+
+    "${INSTALL_DIR}/venv/bin/pip" install --quiet --upgrade pip 2>/dev/null || true
+    "${INSTALL_DIR}/venv/bin/pip" install --quiet -r "${INSTALL_DIR}/requirements.txt"
     ok "Dependencies installed"
 }
 
@@ -1034,7 +1053,15 @@ phase_default_config() {
 }
 
 phase_systemd() {
-    echo -e "\n${BOLD}[7/7] Systemd${NC}"
+    echo -e "\n${BOLD}[7/7] Systemd & CLI wrapper${NC}"
+
+    cat > /usr/local/bin/serverlens <<WRAPPER
+#!/bin/bash
+exec "${INSTALL_DIR}/venv/bin/python" -m serverlens "\$@"
+WRAPPER
+    chmod +x /usr/local/bin/serverlens
+    ok "CLI wrapper: /usr/local/bin/serverlens"
+
     if [[ -f "${SCRIPT_DIR}/etc/serverlens.service" ]]; then
         cp "${SCRIPT_DIR}/etc/serverlens.service" /etc/systemd/system/serverlens.service
         systemctl daemon-reload
@@ -1058,7 +1085,7 @@ phase_summary() {
     echo -e "${BOLD}╚══════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "  Configuration: ${CYAN}${CONFIG_DIR}/config.yaml${NC}"
-    echo -e "  Application:   ${CYAN}${INSTALL_DIR}/bin/serverlens${NC}"
+    echo -e "  Application:   ${CYAN}${INSTALL_DIR}/venv/bin/python -m serverlens${NC}"
     echo -e "  Audit log:     ${CYAN}${LOG_DIR}/audit.log${NC}"
 
     echo ""
@@ -1085,14 +1112,14 @@ phase_summary() {
 
     echo -e "  ${BOLD}Step 2.${NC} Validate configuration:"
     echo ""
-    echo "    php ${INSTALL_DIR}/bin/serverlens validate-config \\"
+    echo "    ${INSTALL_DIR}/venv/bin/python -m serverlens validate-config \\"
     echo "      --config ${CONFIG_DIR}/config.yaml"
     echo ""
 
     echo -e "  ${BOLD}Step 3.${NC} Quick test (Ctrl+C to exit):"
     echo ""
     echo "    echo '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1.0\"}}}' | \\"
-    echo "      php ${INSTALL_DIR}/bin/serverlens serve --config ${CONFIG_DIR}/config.yaml --stdio"
+    echo "      ${INSTALL_DIR}/venv/bin/python -m serverlens serve --config ${CONFIG_DIR}/config.yaml --stdio"
     echo ""
 
     local srv_host; srv_host=$(hostname -f 2>/dev/null || hostname)
@@ -1104,7 +1131,7 @@ phase_summary() {
     echo -e "  ${BOLD}Step 1.${NC} Clone the repository and install dependencies:"
     echo ""
     echo "    git clone <repo-url> ~/serverlens"
-    echo "    cd ~/serverlens/mcp-client && composer install"
+    echo "    cd ~/serverlens && pip install -r requirements.txt"
     echo ""
 
     echo -e "  ${BOLD}Step 2.${NC} Create client config:"
@@ -1121,10 +1148,6 @@ phase_summary() {
     echo "          host: \"${srv_host}\""
     echo "          user: \"YOUR_USER\"       # SSH username"
     echo "          key: \"~/.ssh/id_ed25519\""
-    echo "        remote:"
-    echo "          php: \"php\""
-    echo "          serverlens_path: \"${INSTALL_DIR}/bin/serverlens\""
-    echo "          config_path: \"${CONFIG_DIR}/config.yaml\""
     echo ""
 
     echo -e "  ${BOLD}Step 4.${NC} Add to ${CYAN}~/.cursor/mcp.json${NC} (on your machine):"
@@ -1132,8 +1155,8 @@ phase_summary() {
     echo "    {"
     echo "      \"mcpServers\": {"
     echo "        \"serverlens\": {"
-    echo "          \"command\": \"php\","
-    echo "          \"args\": [\"~/serverlens/mcp-client/bin/serverlens-mcp\","
+    echo "          \"command\": \"python3\","
+    echo "          \"args\": [\"-m\", \"serverlens_mcp\","
     echo "                   \"--config\", \"~/.serverlens/config.yaml\"]"
     echo "        }"
     echo "      }"
