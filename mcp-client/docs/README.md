@@ -65,6 +65,8 @@ servers:
 
 The key under `servers` (e.g. `production`) is the **server id** for the `server` argument to `serverlens_call`. Multiple servers are multiple keys under `servers:`; MCP tool name prefixes are no longer used.
 
+> **Tip:** you can define all servers in one `config.yaml` and use `--servers` to select a subset per project (see section 4).
+
 ### 3. Verify SSH access
 
 Confirm the SSH key works:
@@ -75,7 +77,7 @@ ssh -i ~/.ssh/id_ed25519 deploy@1.2.3.4 "php /opt/serverlens/bin/serverlens vali
 
 ### 4. Connect to Cursor
 
-Add to `~/.cursor/mcp.json`:
+Add to `~/.cursor/mcp.json` (global — all servers):
 
 ```json
 {
@@ -91,6 +93,33 @@ Add to `~/.cursor/mcp.json`:
   }
 }
 ```
+
+**Per-project configuration** — if you only need specific servers in a project, create `.cursor/mcp.json` in the project root and use `--servers`:
+
+```json
+{
+  "mcpServers": {
+    "serverlens": {
+      "command": "php",
+      "args": [
+        "/full/path/to/serverlens/mcp-client/bin/serverlens-mcp",
+        "--config",
+        "/Users/your_username/.serverlens/config.yaml",
+        "--servers",
+        "production"
+      ]
+    }
+  }
+}
+```
+
+Multiple servers — pass comma-separated names:
+
+```json
+"--servers", "production,staging"
+```
+
+Server names must match keys under `servers:` in `config.yaml`. If `--servers` is omitted, all servers from config are connected.
 
 Restart Cursor. ServerLens appears in the list of available MCP servers.
 
@@ -144,6 +173,80 @@ remote:
   php: "php"                                         # PHP path (default "php")
   serverlens_path: "/opt/serverlens/bin/serverlens"  # ServerLens binary
   config_path: "/etc/serverlens/config.yaml"         # ServerLens config path
+```
+
+---
+
+## Per-project server selection (`--servers`)
+
+A single `config.yaml` can list all your servers. The `--servers` flag selects which ones to connect in a particular project.
+
+### How it works
+
+| In `args` | What happens |
+|-----------|------------|
+| `--servers` not set | All servers from `config.yaml` are connected |
+| `--servers`, `"production"` | Only `production` is connected |
+| `--servers`, `"production,staging"` | Both `production` and `staging` are connected |
+
+### Example: global config with 5 servers
+
+`~/.serverlens/config.yaml`:
+```yaml
+servers:
+  service-book:
+    ssh: { host: "1.2.3.4", user: "deploy", key: "~/.ssh/id_ed25519" }
+    remote: { serverlens_path: "/opt/serverlens/bin/serverlens", config_path: "/etc/serverlens/config.yaml" }
+  rias:
+    ssh: { host: "5.6.7.8", user: "deploy", key: "~/.ssh/id_ed25519" }
+    remote: { serverlens_path: "/opt/serverlens/bin/serverlens", config_path: "/etc/serverlens/config.yaml" }
+  rias-test:
+    ssh: { host: "9.10.11.12", user: "deploy", key: "~/.ssh/id_ed25519" }
+    remote: { serverlens_path: "/opt/serverlens/bin/serverlens", config_path: "/etc/serverlens/config.yaml" }
+  # ... more servers
+```
+
+### Project A — needs only `service-book`
+
+`.cursor/mcp.json` in project root:
+```json
+{
+  "mcpServers": {
+    "serverlens": {
+      "command": "php",
+      "args": [
+        "/path/to/mcp-client/bin/serverlens-mcp",
+        "--config", "/Users/you/.serverlens/config.yaml",
+        "--servers", "service-book"
+      ]
+    }
+  }
+}
+```
+
+### Project B — needs `rias` and `rias-test`
+
+```json
+{
+  "mcpServers": {
+    "serverlens": {
+      "command": "php",
+      "args": [
+        "/path/to/mcp-client/bin/serverlens-mcp",
+        "--config", "/Users/you/.serverlens/config.yaml",
+        "--servers", "rias,rias-test"
+      ]
+    }
+  }
+}
+```
+
+### Validation
+
+If a server name in `--servers` does not exist in `config.yaml`, the MCP client exits with an error:
+
+```
+Fatal: Unknown server(s) in --servers: typo-name. Available in config: service-book, rias, rias-test
 ```
 
 ---

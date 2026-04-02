@@ -30,6 +30,14 @@ Short sequence:
 2. **On your machine:** `cd mcp-client && composer install`, configure `~/.serverlens/config.yaml` with SSH settings
 3. **In Cursor:** add the MCP proxy to `~/.cursor/mcp.json`, restart
 
+**Per-project server access:** use `--servers` to connect only specific servers in a project:
+
+```json
+"args": ["...", "--config", "~/.serverlens/config.yaml", "--servers", "production,staging"]
+```
+
+Define all servers once in `config.yaml`, then select which ones each project needs via `--servers` (comma-separated). See [MCP proxy docs](mcp-client/docs/README.md#per-project-server-selection---servers).
+
 ## Tools (MCP proxy v2)
 
 In Cursor you see **two** proxy tools; remote operations go through them:
