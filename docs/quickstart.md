@@ -225,6 +225,8 @@ ssh -i ~/.ssh/id_ed25519 deploy@1.2.3.4 "php /opt/serverlens/bin/serverlens vali
 
 ## Step 6. Connect to Cursor
 
+### Option A — global (all servers)
+
 Add to `~/.cursor/mcp.json` (create the file if missing):
 
 ```json
@@ -242,11 +244,38 @@ Add to `~/.cursor/mcp.json` (create the file if missing):
 }
 ```
 
+### Option B — per-project (specific servers only)
+
+Create `.cursor/mcp.json` **in the project root** and add `--servers` with comma-separated server names:
+
+```json
+{
+  "mcpServers": {
+    "serverlens": {
+      "command": "php",
+      "args": [
+        "/Users/YOUR_USERNAME/serverlens/mcp-client/bin/serverlens-mcp",
+        "--config",
+        "/Users/YOUR_USERNAME/.serverlens/config.yaml",
+        "--servers",
+        "production"
+      ]
+    }
+  }
+}
+```
+
+For multiple servers: `"--servers", "production,staging"`.
+
+This way different projects can access different servers from the same `config.yaml`. Server names must match keys under `servers:` in your config.
+
 > **Important:** paths must be **absolute**.
 
 Restart Cursor. In MCP logs (Output → MCP) you should see:
 
 ```
+[MCP] Config: /Users/.../.serverlens/config.yaml
+[MCP] Server filter: production                     ← only with --servers
 [MCP] Connecting to server 'production'...
 [MCP:production] Initialized: ServerLens v1.0.0
 [MCP] Discovered 17 tools on 'production'

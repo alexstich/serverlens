@@ -38,6 +38,28 @@ final class Config
         return $this->data['servers'] ?? [];
     }
 
+    /**
+     * Keep only the specified servers, remove everything else.
+     *
+     * @param string[] $names Server names to keep (must exist in config)
+     * @throws \RuntimeException if a requested server is not in config
+     */
+    public function filterServers(array $names): void
+    {
+        $all = $this->data['servers'] ?? [];
+        $unknown = array_diff($names, array_keys($all));
+
+        if (!empty($unknown)) {
+            $available = implode(', ', array_keys($all));
+            $missing = implode(', ', $unknown);
+            throw new \RuntimeException(
+                "Unknown server(s) in --servers: {$missing}. Available in config: {$available}"
+            );
+        }
+
+        $this->data['servers'] = array_intersect_key($all, array_flip($names));
+    }
+
     private function validate(): void
     {
         $servers = $this->getServers();

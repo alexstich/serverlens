@@ -9,10 +9,15 @@ use ServerLensMcp\Config;
 use ServerLensMcp\McpProxy;
 
 $configPath = null;
+$serverFilter = null;
 
 for ($i = 1; $i < $argc; $i++) {
     if ($argv[$i] === '--config' && isset($argv[$i + 1])) {
         $configPath = $argv[$i + 1];
+        $i++;
+    } elseif ($argv[$i] === '--servers' && isset($argv[$i + 1])) {
+        $serverFilter = array_map('trim', explode(',', $argv[$i + 1]));
+        $serverFilter = array_filter($serverFilter, fn(string $s) => $s !== '');
         $i++;
     } elseif ($argv[$i] === '--help' || $argv[$i] === '-h') {
         printUsage();
@@ -45,6 +50,12 @@ fwrite(STDERR, "[MCP] Config: {$configPath}\n");
 
 try {
     $config = Config::load($configPath);
+
+    if ($serverFilter !== null) {
+        $config->filterServers($serverFilter);
+        fwrite(STDERR, "[MCP] Server filter: " . implode(', ', $serverFilter) . "\n");
+    }
+
     $proxy = new McpProxy($config);
     $proxy->run();
 } catch (\Throwable $e) {
@@ -61,18 +72,33 @@ Connects to remote ServerLens instances via SSH and exposes
 their tools through the MCP protocol (stdio transport).
 
 Usage:
-  serverlens-mcp [--config <path>]
+  serverlens-mcp [--config <path>] [--servers <name1,name2,...>]
 
 Options:
-  --config <path>   Path to config.yaml (default: ~/.serverlens/config.yaml)
-  --help, -h        Show this help
+  --config <path>            Path to config.yaml (default: ~/.serverlens/config.yaml)
+  --servers <name1,name2>    Connect only to these servers (comma-separated).
+                             Names must match keys in config.yaml under "servers:".
+                             If omitted, all servers from config are connected.
+  --help, -h                 Show this help
 
-Cursor configuration (~/.cursor/mcp.json):
+Cursor configuration (~/.cursor/mcp.json or .cursor/mcp.json in project):
+
+  All servers (global):
   {
     "mcpServers": {
       "serverlens": {
         "command": "php",
         "args": ["/path/to/mcp-client/bin/serverlens-mcp", "--config", "~/.serverlens/config.yaml"]
+      }
+    }
+  }
+
+  Specific servers (per-project .cursor/mcp.json):
+  {
+    "mcpServers": {
+      "serverlens": {
+        "command": "php",
+        "args": ["/path/to/mcp-client/bin/serverlens-mcp", "--config", "~/.serverlens/config.yaml", "--servers", "production,staging"]
       }
     }
   }
