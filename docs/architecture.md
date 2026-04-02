@@ -203,7 +203,7 @@ MCP-клиент ←HTTP SSE→ ServerLens (через SSH-туннель)
 ## Структура проекта
 
 ```
-sauron/
+serverlens/
 ├── README.md
 ├── description.md              # Исходное описание
 │

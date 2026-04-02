@@ -303,13 +303,13 @@ wizard_logs() {
         warn "Лог-файлы не обнаружены"
     else
         echo ""
-        if ask_yn "Включить все найденные логи?" "y"; then
+        local sel
+        sel=$(ask_input "Какие логи включить? (all / номера через запятую / Enter — пропустить)" "all")
+        if [[ "${sel,,}" == "all" ]]; then
             for i in "${!found_logs[@]}"; do
                 append_log "${found_names[$i]}" "${found_logs[$i]}" "${found_formats[$i]}"
             done
-        else
-            local sel
-            sel=$(ask_input "Номера через запятую (например 1,2,4)")
+        elif [[ -n "$sel" ]]; then
             IFS=',' read -ra nums <<< "$sel"
             for n in "${nums[@]}"; do
                 n=$(( ${n// /} - 1 ))
@@ -319,14 +319,30 @@ wizard_logs() {
     fi
 
     echo ""
-    while ask_yn "Добавить свой путь к логу?" "n"; do
+    while ask_yn "Добавить свой путь к файлу лога?" "n"; do
         local cpath cname cfmt
         cpath=$(ask_input "Путь к файлу лога")
         [[ ! -f "$cpath" ]] && { warn "Файл не найден: $cpath"; continue; }
         cname=$(ask_input "Имя источника" "$(make_log_name "$cpath" "custom")")
         cfmt=$(ask_input "Формат (plain/json/nginx_combined/postgres)" "plain")
         append_log "$cname" "$cpath" "$cfmt"
-        ok "Добавлен: $cname"
+        ok "Добавлен файл: $cname"
+    done
+
+    echo ""
+    while ask_yn "Добавить папку с логами? (все *.log внутри будут подхвачены)" "n"; do
+        local dpath dname dfmt dpattern
+        dpath=$(ask_input "Путь к папке с логами")
+        if [[ ! -d "$dpath" ]]; then
+            warn "Папка не найдена: $dpath"; continue
+        fi
+        local logcount; logcount=$(find "$dpath" -maxdepth 1 -name '*.log' 2>/dev/null | wc -l)
+        info "Найдено файлов *.log: ${logcount}"
+        dname=$(ask_input "Имя источника" "custom_$(basename "$dpath" | sed 's/[^a-zA-Z0-9_]/_/g')")
+        dpattern=$(ask_input "Маска файлов" "*.log")
+        dfmt=$(ask_input "Формат (plain/json/nginx_combined/postgres)" "plain")
+        append_log_dir "$dname" "$dpath" "$dpattern" "$dfmt"
+        ok "Добавлена папка: $dpath ($dpattern)"
     done
 }
 
@@ -334,12 +350,29 @@ append_log() {
     LOG_YAML+="    - name: \"$1\"\n      path: \"$2\"\n      format: \"$3\"\n      max_lines: 5000\n\n"
 }
 
+append_log_dir() {
+    LOG_YAML+="    - name: \"$1\"\n      path: \"$2\"\n      type: \"directory\"\n      pattern: \"$3\"\n      format: \"$4\"\n      max_lines: 5000\n\n"
+}
+
 fix_log_permissions() {
     echo -e "\n${BOLD}  ── Права на лог-файлы ──${NC}\n"
 
     if ! getent group adm &>/dev/null; then
         warn "Группа 'adm' не найдена (не Ubuntu/Debian?)"
-        info "Выставите права на логи вручную — см. docs/quickstart.md"
+        echo ""
+        info "ServerLens читает логи от имени пользователя serverlens."
+        info "Без группы 'adm' нужно вручную дать доступ к лог-файлам."
+        echo ""
+        info "Для каждого лога выполните:"
+        echo ""
+        echo "    sudo chgrp serverlens /путь/к/лог-файлу"
+        echo "    sudo chmod 640 /путь/к/лог-файлу"
+        echo ""
+        info "Пример для nginx:"
+        echo ""
+        echo "    sudo chgrp serverlens /var/log/nginx/access.log /var/log/nginx/error.log"
+        echo "    sudo chmod 640 /var/log/nginx/access.log /var/log/nginx/error.log"
+        echo ""
         return
     fi
 
@@ -381,12 +414,49 @@ fix_log_permissions() {
     fi
 
     if (( fixed > 0 )); then
-        info "Чтобы права сохранялись после ротации логов, проверьте:"
+        echo ""
+        info "Logrotate: после ротации логов права могут сброситься."
+        info "Директива 'create' в конфиге logrotate гарантирует нужные права."
+        echo ""
+
+        declare -a lr_files=() lr_create=()
         for lr in /etc/logrotate.d/php*-fpm; do
-            [[ -f "$lr" ]] && info "  $lr → добавьте 'create 0640 root adm'"
+            [[ -f "$lr" ]] || continue
+            if ! grep -q '^\s*create\b' "$lr" 2>/dev/null; then
+                lr_files+=("$lr"); lr_create+=("create 0640 root adm")
+            fi
         done
-        [[ -f /etc/logrotate.d/rabbitmq-server ]] && \
-            info "  /etc/logrotate.d/rabbitmq-server → добавьте 'create 0640 rabbitmq rabbitmq'"
+        if [[ -f /etc/logrotate.d/rabbitmq-server ]]; then
+            if ! grep -q '^\s*create\b' /etc/logrotate.d/rabbitmq-server 2>/dev/null; then
+                lr_files+=("/etc/logrotate.d/rabbitmq-server"); lr_create+=("create 0640 rabbitmq rabbitmq")
+            fi
+        fi
+
+        if (( ${#lr_files[@]} > 0 )); then
+            for i in "${!lr_files[@]}"; do
+                warn "${lr_files[$i]} — отсутствует директива '${lr_create[$i]}'"
+            done
+            echo ""
+            if ask_yn "Добавить директивы 'create' в logrotate автоматически?" "y"; then
+                for i in "${!lr_files[@]}"; do
+                    if sed -i '/{/a\    '"${lr_create[$i]}" "${lr_files[$i]}" 2>/dev/null; then
+                        ok "${lr_files[$i]} — добавлено '${lr_create[$i]}'"
+                    else
+                        warn "Не удалось изменить ${lr_files[$i]}"
+                        info "  Выполните вручную: sudo nano ${lr_files[$i]}"
+                        info "  Добавьте строку '${lr_create[$i]}' внутри блока { ... }"
+                    fi
+                done
+            else
+                info "Добавьте вручную:"
+                for i in "${!lr_files[@]}"; do
+                    info "  sudo nano ${lr_files[$i]}"
+                    info "  → внутри блока { ... } добавьте строку: ${lr_create[$i]}"
+                done
+            fi
+        else
+            ok "Конфигурация logrotate уже содержит нужные директивы"
+        fi
     else
         ok "Права на лог-файлы в порядке"
     fi
@@ -442,12 +512,13 @@ wizard_configs() {
         warn "Конфигурационные файлы не обнаружены"
     else
         echo ""
-        if ask_yn "Включить все найденные конфиги?" "y"; then
+        local sel
+        sel=$(ask_input "Какие конфиги включить? (all / номера через запятую / Enter — пропустить)" "all")
+        if [[ "${sel,,}" == "all" ]]; then
             for i in "${!found_cfgs[@]}"; do
                 append_config "${found_cfg_names[$i]}" "${found_cfgs[$i]}" "${found_cfg_redacts[$i]}"
             done
-        else
-            local sel; sel=$(ask_input "Номера через запятую")
+        elif [[ -n "$sel" ]]; then
             IFS=',' read -ra nums <<< "$sel"
             for n in "${nums[@]}"; do
                 n=$(( ${n// /} - 1 ))
@@ -515,13 +586,13 @@ wizard_system() {
             ((widx++))
         done
         echo ""
-        if ask_yn "Добавить все воркеры в мониторинг?" "y"; then
+        local sel
+        sel=$(ask_input "Какие воркеры добавить? (all / номера через запятую / Enter — пропустить)" "all")
+        if [[ "${sel,,}" == "all" ]]; then
             for w in "${FOUND_WORKERS[@]}"; do
                 SYSTEM_SVC_YAML+="    - \"${w}\"\n"
             done
-        else
-            local sel
-            sel=$(ask_input "Номера через запятую (например 1,3,5)")
+        elif [[ -n "$sel" ]]; then
             IFS=',' read -ra nums <<< "$sel"
             for n in "${nums[@]}"; do
                 n=$(( ${n// /} - 1 ))
@@ -545,8 +616,18 @@ wizard_system() {
                 info "  [${didx}] $s"; stack_list+=("$s"); ((didx++))
             done <<< "$stacks"
             echo ""
-            if ask_yn "Мониторить все стеки?" "y"; then
+            local ssel
+            ssel=$(ask_input "Какие стеки мониторить? (all / номера через запятую / Enter — пропустить)" "all")
+            if [[ "${ssel,,}" == "all" ]]; then
                 for s in "${stack_list[@]}"; do DOCKER_YAML+="    - \"${s}\"\n"; done
+            elif [[ -n "$ssel" ]]; then
+                IFS=',' read -ra nums <<< "$ssel"
+                for n in "${nums[@]}"; do
+                    n=$(( ${n// /} - 1 ))
+                    if (( n >= 0 && n < ${#stack_list[@]} )); then
+                        DOCKER_YAML+="    - \"${stack_list[$n]}\"\n"
+                    fi
+                done
             fi
         fi
     fi
@@ -722,7 +803,7 @@ phase_wizard() {
         done
 
         echo ""
-        local sel; sel=$(ask_input "Какие сервисы мониторить? (номера, 'all' или пустое)" "all")
+        local sel; sel=$(ask_input "Какие сервисы мониторить? (all / номера через запятую / Enter — все)" "all")
         if [[ "$sel" == "all" ]]; then
             SELECTED_SERVICES=("${FOUND_SERVICES[@]}")
         elif [[ -n "$sel" ]]; then
@@ -750,7 +831,12 @@ phase_wizard() {
             bash "$db_script"
         else
             warn "Скрипт ${db_script} не найден, пропускаем"
-            warn "Запустите позже: sudo bash scripts/setup_db.sh"
+            echo ""
+            info "Скрипт создаёт read-only пользователя PostgreSQL для мониторинга."
+            info "Выполните позже из директории проекта:"
+            echo ""
+            echo "    cd ${SCRIPT_DIR} && sudo bash scripts/setup_db.sh"
+            echo ""
         fi
     fi
 }
@@ -765,7 +851,12 @@ phase_default_config() {
         chown root:${SERVICE_USER} "$cfg" 2>/dev/null || true
         chmod 640 "$cfg"
         ok "Скопирован config.example.yaml → ${cfg}"
-        warn "Отредактируйте вручную: sudo nano ${cfg}"
+        echo ""
+        info "Конфиг содержит шаблонные значения. Проверьте и адаптируйте под сервер:"
+        echo ""
+        echo "    sudo nano ${cfg}"
+        echo ""
+        info "Ключевые секции: logs (лог-файлы), configs (конфиги), system (мониторинг)."
     fi
 }
 
@@ -775,7 +866,13 @@ phase_systemd() {
         cp "${SCRIPT_DIR}/etc/serverlens.service" /etc/systemd/system/serverlens.service
         systemctl daemon-reload
         ok "Сервис установлен (не запущен)"
-        info "Запуск нужен только для SSE-режима, для SSH+stdio — не нужен"
+        echo ""
+        info "MCP-клиент запускает ServerLens по SSH автоматически."
+        info "Systemd-сервис нужен только для режима SSE (HTTP). Если нужен:"
+        echo ""
+        echo "    sudo systemctl start serverlens     # запуск"
+        echo "    sudo systemctl enable serverlens    # автозапуск при загрузке"
+        echo ""
     else
         warn "serverlens.service не найден, пропуск"
     fi
@@ -844,8 +941,50 @@ phase_summary() {
     echo -e "  ${YELLOW}⚠${NC} После usermod нужно перелогиниться (выйти и зайти по SSH заново)"
     echo ""
 
-    echo -e "  ${BOLD}Далее:${NC} настройте MCP-клиент на машине разработчика"
-    echo -e "  См. docs/quickstart.md (шаги 4–6)"
+    local srv_host; srv_host=$(hostname -f 2>/dev/null || hostname)
+
+    echo -e "  ${BOLD}Далее: настройка MCP-клиента (на вашей машине разработчика)${NC}"
+    echo ""
+    echo -e "  ${BOLD}1.${NC} Клонируйте репозиторий и установите зависимости:"
+    echo ""
+    echo "    git clone <url-репозитория> ~/serverlens"
+    echo "    cd ~/serverlens/mcp-client && composer install"
+    echo ""
+    echo -e "  ${BOLD}2.${NC} Создайте конфиг клиента:"
+    echo ""
+    echo "    mkdir -p ~/.serverlens"
+    echo "    cp ~/serverlens/mcp-client/config.example.yaml ~/.serverlens/config.yaml"
+    echo ""
+    echo -e "  ${BOLD}3.${NC} Укажите в ${CYAN}~/.serverlens/config.yaml${NC} данные этого сервера:"
+    echo ""
+    echo "    servers:"
+    echo "      production:              # произвольное имя"
+    echo "        ssh:"
+    echo "          host: \"${srv_host}\""
+    echo "          user: \"ВАШUSER\"       # SSH-пользователь"
+    echo "          key: \"~/.ssh/id_ed25519\""
+    echo "        remote:"
+    echo "          php: \"php\""
+    echo "          serverlens_path: \"${INSTALL_DIR}/bin/serverlens\""
+    echo "          config_path: \"${CONFIG_DIR}/config.yaml\""
+    echo ""
+    echo -e "  ${BOLD}4.${NC} Добавьте в ${CYAN}~/.cursor/mcp.json${NC} (на вашей машине):"
+    echo ""
+    echo "    {"
+    echo "      \"mcpServers\": {"
+    echo "        \"serverlens\": {"
+    echo "          \"command\": \"php\","
+    echo "          \"args\": [\"~/serverlens/mcp-client/bin/serverlens-mcp\","
+    echo "                   \"--config\", \"~/.serverlens/config.yaml\"]"
+    echo "        }"
+    echo "      }"
+    echo "    }"
+    echo ""
+    echo -e "  ${BOLD}5.${NC} Перезапустите Cursor. В Output → MCP должно появиться:"
+    echo ""
+    echo "    [MCP] Ready: 1 server(s), N remote tool(s), 2 MCP tools"
+    echo ""
+    echo -e "  Подробная инструкция: ${CYAN}docs/quickstart.md${NC} (шаги 4–6)"
     echo ""
 }
 

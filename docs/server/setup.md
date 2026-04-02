@@ -17,7 +17,7 @@
 ### Вариант A — Интерактивный установщик (рекомендуется)
 
 ```bash
-git clone git@gitlab.rucode.org:devtools/sauron.git ~/serverlens-src
+git clone git@gitlab.rucode.org:devtools/serverlens.git ~/serverlens-src
 cd ~/serverlens-src
 sudo bash scripts/install.sh
 ```
@@ -45,7 +45,7 @@ sudo bash scripts/install.sh --no-wizard
 ### Вариант B — Ручная
 
 ```bash
-git clone git@gitlab.rucode.org:devtools/sauron.git ~/serverlens-src
+git clone git@gitlab.rucode.org:devtools/serverlens.git ~/serverlens-src
 sudo mkdir -p /opt/serverlens /etc/serverlens /var/log/serverlens
 sudo cp -r ~/serverlens-src/src/ ~/serverlens-src/bin/ ~/serverlens-src/composer.json /opt/serverlens/
 cd /opt/serverlens && sudo composer install --no-dev --optimize-autoloader

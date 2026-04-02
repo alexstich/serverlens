@@ -16,7 +16,7 @@
 ```bash
 ssh alex@1.2.3.4
 
-git clone git@gitlab.rucode.org:devtools/sauron.git ~/serverlens-src
+git clone git@gitlab.rucode.org:devtools/serverlens.git ~/serverlens-src
 cd ~/serverlens-src
 ```
 
@@ -165,7 +165,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 Теперь переходим **на свой компьютер** (машина разработчика):
 
 ```bash
-git clone git@gitlab.rucode.org:devtools/sauron.git ~/serverlens
+git clone git@gitlab.rucode.org:devtools/serverlens.git ~/serverlens
 cd ~/serverlens/mcp-client
 composer install
 ```
