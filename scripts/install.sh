@@ -909,16 +909,24 @@ phase_checks() {
     fi
     ok "Python ${py_version}"
 
-    if $python_cmd -c 'import venv' 2>/dev/null; then
-        ok "venv module"
+    if $python_cmd -c 'import ensurepip' 2>/dev/null; then
+        ok "venv + ensurepip"
     else
-        fail "Python venv module not found. Install: apt install python3-venv"
-    fi
-
-    if $python_cmd -c 'import pip' 2>/dev/null; then
-        ok "pip module"
-    else
-        warn "pip not found — will attempt install via ensurepip"
+        warn "ensurepip отсутствует (venv не сможет создать pip) — устанавливаю..."
+        local venv_pkg="python${py_version}-venv"
+        if command -v apt-get &>/dev/null; then
+            info "apt-get update && apt-get install -y ${venv_pkg}"
+            apt-get update -qq 2>/dev/null
+            apt-get install -y "$venv_pkg" 2>/dev/null
+            $python_cmd -c 'import ensurepip' 2>/dev/null || fail "Не удалось установить ${venv_pkg}. Вручную: apt install ${venv_pkg}"
+            ok "venv + ensurepip (установлен: ${venv_pkg})"
+        elif command -v dnf &>/dev/null; then
+            dnf install -y "python3-pip" 2>/dev/null
+            $python_cmd -c 'import ensurepip' 2>/dev/null || fail "Не удалось установить ensurepip. Вручную: dnf install python3-pip"
+            ok "venv + ensurepip (установлен)"
+        else
+            fail "ensurepip отсутствует. Установите: apt install ${venv_pkg}"
+        fi
     fi
 }
 
@@ -965,6 +973,11 @@ phase_dependencies() {
         fi
     done
 
+    if [[ -d "${INSTALL_DIR}/venv" ]] && [[ ! -x "${INSTALL_DIR}/venv/bin/pip" ]]; then
+        warn "venv повреждён (нет pip) — пересоздаю..."
+        rm -rf "${INSTALL_DIR}/venv"
+    fi
+
     if [[ ! -d "${INSTALL_DIR}/venv" ]]; then
         $python_cmd -m venv "${INSTALL_DIR}/venv"
         ok "Virtual environment created"
@@ -973,7 +986,7 @@ phase_dependencies() {
     fi
 
     "${INSTALL_DIR}/venv/bin/pip" install --quiet --upgrade pip 2>/dev/null || true
-    "${INSTALL_DIR}/venv/bin/pip" install --quiet -r "${INSTALL_DIR}/requirements.txt"
+    "${INSTALL_DIR}/venv/bin/pip" install --quiet "${INSTALL_DIR}"
     ok "Dependencies installed"
 }
 
