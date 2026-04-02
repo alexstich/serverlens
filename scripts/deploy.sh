@@ -150,21 +150,23 @@ deploy_server() {
     read -r user host port <<< "$ssh_info"
     key=$(resolve_key "$name")
 
-    local ssh_opts="-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p $port"
-    local scp_opts="-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -P $port"
+    local common_opts="-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10"
     if [[ -n "$key" ]]; then
-        ssh_opts="$ssh_opts -i $key"
-        scp_opts="$scp_opts -i $key"
+        common_opts="$common_opts -i $key"
     fi
+
+    local batch_ssh_opts="-o BatchMode=yes $common_opts -p $port"
+    local scp_opts="-o BatchMode=yes $common_opts -P $port"
+    local interactive_ssh_opts="$common_opts -p $port"
 
     local target="${user}@${host}"
 
-    local ssh_cmd="ssh $ssh_opts"
+    local ssh_cmd="ssh $batch_ssh_opts"
     local scp_cmd="scp $scp_opts"
 
     # 1. Проверяем соединение
     info "Проверяю SSH соединение..."
-    echo -e "  ${YELLOW}\$${NC} ssh ${ssh_opts} ${target} echo ok"
+    echo -e "  ${YELLOW}\$${NC} ssh ${batch_ssh_opts} ${target} echo ok"
     if ! $ssh_cmd "$target" "echo ok" &>/dev/null; then
         fail "Не могу подключиться к ${target}:${port}"
         return 1
@@ -188,12 +190,12 @@ deploy_server() {
 
     # 3. Распаковываем и запускаем миграцию
     info "Подключаюсь к серверу для миграции..."
-    echo -e "  ${YELLOW}\$${NC} ssh -t ${ssh_opts} ${target} ..."
+    echo -e "  ${YELLOW}\$${NC} ssh -t ${interactive_ssh_opts} ${target} ..."
     echo -e "  ${YELLOW}  [remote]\$${NC} tar -xzf /tmp/serverlens-deploy.tar.gz -C /tmp/serverlens-deploy"
     echo -e "  ${YELLOW}  [remote]\$${NC} # если есть /etc/serverlens/config.yaml → миграция, иначе → свежая установка"
     echo ""
 
-    ssh -t $ssh_opts "$target" bash -c "'
+    ssh -tt $interactive_ssh_opts "$target" bash -c "'
         set -euo pipefail
         rm -rf /tmp/serverlens-deploy
         mkdir -p /tmp/serverlens-deploy
