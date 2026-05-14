@@ -106,6 +106,12 @@ MY_CMD=""
 MY_HOST="localhost"
 MY_PORT="3306"
 MY_USER_HOST="localhost"
+MY_DEFAULTS=""
+
+cleanup_defaults() {
+    [[ -n "$MY_DEFAULTS" && -f "$MY_DEFAULTS" ]] && rm -f "$MY_DEFAULTS"
+}
+trap cleanup_defaults EXIT
 
 setup_connection() {
     echo -e "\n${BOLD}  MySQL connection${NC}\n"
@@ -133,17 +139,24 @@ setup_connection() {
     read -rs my_pass
     echo ""
 
-    export MYSQL_PWD="$my_pass"
-    MY_CMD="mysql -h ${MY_HOST} -P ${MY_PORT} -u ${my_user}"
+    MY_DEFAULTS=$(mktemp)
+    chmod 600 "$MY_DEFAULTS"
+    printf '[client]\npassword=%s\n' "$my_pass" > "$MY_DEFAULTS"
 
-    if ! $MY_CMD -e "SELECT 1" &>/dev/null 2>&1; then
+    if [[ "$MY_HOST" == "localhost" || "$MY_HOST" == "127.0.0.1" ]]; then
+        MY_CMD="mysql --defaults-extra-file=${MY_DEFAULTS} -u ${my_user}"
+    else
+        MY_CMD="mysql --defaults-extra-file=${MY_DEFAULTS} -h ${MY_HOST} -P ${MY_PORT} -u ${my_user}"
+        MY_USER_HOST="%"
+    fi
+
+    local test_err
+    if ! test_err=$($MY_CMD -e "SELECT 1" 2>&1); then
+        cleanup_defaults
+        [[ -n "$test_err" ]] && warn "$test_err"
         fail "Failed to connect to MySQL"
     fi
     ok "Connected to ${MY_HOST}:${MY_PORT}"
-
-    if [[ "$MY_HOST" != "localhost" && "$MY_HOST" != "127.0.0.1" ]]; then
-        MY_USER_HOST="%"
-    fi
 }
 
 mysql_exec() {
