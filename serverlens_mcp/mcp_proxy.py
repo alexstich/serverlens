@@ -14,25 +14,9 @@ class McpProxy:
         self._remote_tools: dict[str, list[dict[str, Any]]] = {}
         self._server_configs = config.get_servers()
 
-        for name, server_config in self._server_configs.items():
-            print(f"[MCP] Connecting to server '{name}'...", file=sys.stderr)
-
-            ssh = SshConnection(name, server_config)
-            if not ssh.connect():
-                print(f"[MCP] FAILED: cannot connect to '{name}'", file=sys.stderr)
-                continue
-            if not ssh.initialize():
-                print(f"[MCP] FAILED: cannot initialize '{name}'", file=sys.stderr)
-                ssh.close()
-                continue
-
-            self._servers[name] = ssh
-            self._discover_tools(name, ssh)
-
-        total_servers = len(self._servers)
-        total_tools = sum(len(t) for t in self._remote_tools.values())
+        server_names = ", ".join(self._server_configs.keys())
         print(
-            f"[MCP] Ready: {total_servers} server(s), {total_tools} remote tool(s), 2 MCP tools",
+            f"[MCP] Ready (lazy connect): {len(self._server_configs)} server(s) configured ({server_names}), 2 MCP tools",
             file=sys.stderr,
         )
 
@@ -133,6 +117,11 @@ class McpProxy:
         if filter_server:
             return self._handle_list_server(msg_id, filter_server)
 
+        # Refresh connection states on demand to avoid stale "disconnected"
+        # statuses in list output when reconnect is possible.
+        for name in self._server_configs:
+            self._ensure_connected(name)
+
         result = []
         for name in self._server_configs:
             result.append({
@@ -155,7 +144,7 @@ class McpProxy:
                 "isError": True,
             })
 
-        connected = server_name in self._servers
+        connected = self._ensure_connected(server_name)
         tools = []
         for tool in self._remote_tools.get(server_name, []):
             entry: dict[str, Any] = {"name": tool["name"], "description": tool.get("description", "")}
@@ -197,25 +186,16 @@ class McpProxy:
                 "isError": True,
             })
 
+        if not self._ensure_connected(server_name):
+            return _jsonrpc(msg_id, {
+                "content": [{"type": "text", "text": f"Server '{server_name}' not connected and reconnect failed"}],
+                "isError": True,
+            })
+
         known_tools = [t["name"] for t in self._remote_tools.get(server_name, [])]
         if tool_name not in known_tools:
             return _jsonrpc(msg_id, {
                 "content": [{"type": "text", "text": f"Unknown tool '{tool_name}' on server '{server_name}'. Available: {', '.join(known_tools)}"}],
-                "isError": True,
-            })
-
-        need_reconnect = False
-        if server_name not in self._servers:
-            need_reconnect = True
-        elif not self._servers[server_name].is_alive():
-            print(f"[MCP] Server '{server_name}' connection lost", file=sys.stderr)
-            self._servers[server_name].close()
-            del self._servers[server_name]
-            need_reconnect = True
-
-        if need_reconnect and not self._reconnect_server(server_name):
-            return _jsonrpc(msg_id, {
-                "content": [{"type": "text", "text": f"Server '{server_name}' not connected and reconnect failed"}],
                 "isError": True,
             })
 
@@ -254,11 +234,25 @@ class McpProxy:
             return False
 
         self._servers[server_name] = ssh
-        if server_name not in self._remote_tools:
-            self._discover_tools(server_name, ssh)
+        # Always refresh tool cache after reconnect in case remote tool set changed.
+        self._discover_tools(server_name, ssh)
 
         print(f"[MCP] Reconnected to '{server_name}'", file=sys.stderr)
         return True
+
+    def _ensure_connected(self, server_name: str) -> bool:
+        if server_name not in self._server_configs:
+            return False
+
+        existing = self._servers.get(server_name)
+        if existing is not None:
+            if existing.is_alive():
+                return True
+            print(f"[MCP] Server '{server_name}' connection lost", file=sys.stderr)
+            existing.close()
+            del self._servers[server_name]
+
+        return self._reconnect_server(server_name)
 
     def _discover_tools(self, server_name: str, ssh: SshConnection) -> None:
         tools = ssh.get_tools()
