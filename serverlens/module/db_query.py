@@ -6,8 +6,19 @@ import re
 import sys
 from typing import Any
 
-import psycopg2
-import psycopg2.extras
+try:
+    import psycopg2
+    import psycopg2.extras
+    _HAS_PG = True
+except ImportError:
+    _HAS_PG = False
+
+try:
+    import pymysql
+    import pymysql.cursors
+    _HAS_MYSQL = True
+except ImportError:
+    _HAS_MYSQL = False
 
 from serverlens.config import Config
 from serverlens.mcp.tool import Tool
@@ -36,9 +47,13 @@ class DbQuery(ModuleInterface):
                     "allowed_order_by": table.get("allowed_order_by", []),
                 }
 
+            driver = conn.get("driver", "postgresql")
+            default_port = 3306 if driver == "mysql" else 5432
+
             self._connections[conn["name"]] = {
+                "driver": driver,
                 "host": conn.get("host", "localhost"),
-                "port": int(conn.get("port", 5432)),
+                "port": int(conn.get("port", default_port)),
                 "database": conn.get("database", ""),
                 "user": conn.get("user", ""),
                 "password": password,
@@ -117,8 +132,8 @@ class DbQuery(ModuleInterface):
             status = "untested"
             error_msg = None
             try:
-                pg = self._get_conn(name)
-                with pg.cursor() as cur:
+                db = self._get_conn(name)
+                with db.cursor() as cur:
                     cur.execute("SELECT 1")
                 status = "ok"
             except Exception as e:
@@ -127,6 +142,7 @@ class DbQuery(ModuleInterface):
 
             entry: dict[str, Any] = {
                 "database": name,
+                "driver": conn["driver"],
                 "connection_status": status,
                 "has_password": bool(conn["password"]),
                 "tables": tables,
@@ -185,14 +201,15 @@ class DbQuery(ModuleInterface):
         offset = max(0, offset)
 
         try:
-            pg = self._get_conn(db_name)
-            quoted_fields = [_quote_ident(f) for f in fields]
-            quoted_table = _quote_ident(table_name)
+            conn = self._get_conn(db_name)
+            driver = self._connections[db_name]["driver"]
+            quoted_fields = [_quote_ident(f, driver) for f in fields]
+            quoted_table = _quote_ident(table_name, driver)
 
             sql = f"SELECT {', '.join(quoted_fields)} FROM {quoted_table}"
             params: list[Any] = []
 
-            where = self._build_where(filters, params)
+            where = self._build_where(filters, params, driver)
             if where:
                 sql += f" WHERE {where}"
 
@@ -200,17 +217,22 @@ class DbQuery(ModuleInterface):
                 parts = []
                 for ob in order_by:
                     if ob.startswith("-"):
-                        parts.append(f"{_quote_ident(ob[1:])} DESC")
+                        parts.append(f"{_quote_ident(ob[1:], driver)} DESC")
                     else:
-                        parts.append(f"{_quote_ident(ob)} ASC")
+                        parts.append(f"{_quote_ident(ob, driver)} ASC")
                 sql += " ORDER BY " + ", ".join(parts)
 
             sql += " LIMIT %s OFFSET %s"
             params.extend([limit, offset])
 
-            with pg.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute(sql, params)
-                rows = [dict(r) for r in cur.fetchall()]
+            if driver == "mysql":
+                with conn.cursor(pymysql.cursors.DictCursor) as cur:
+                    cur.execute(sql, params)
+                    rows = [dict(r) for r in cur.fetchall()]
+            else:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(sql, params)
+                    rows = [dict(r) for r in cur.fetchall()]
 
             for row in rows:
                 for k, v in row.items():
@@ -247,14 +269,15 @@ class DbQuery(ModuleInterface):
             return self.error(err)
 
         try:
-            pg = self._get_conn(db_name)
+            conn = self._get_conn(db_name)
+            driver = self._connections[db_name]["driver"]
             params: list[Any] = []
-            sql = f"SELECT COUNT(*) as count FROM {_quote_ident(table_name)}"
-            where = self._build_where(filters, params)
+            sql = f"SELECT COUNT(*) as count FROM {_quote_ident(table_name, driver)}"
+            where = self._build_where(filters, params, driver)
             if where:
                 sql += f" WHERE {where}"
 
-            with pg.cursor() as cur:
+            with conn.cursor() as cur:
                 cur.execute(sql, params)
                 row = cur.fetchone()
 
@@ -284,15 +307,23 @@ class DbQuery(ModuleInterface):
             return self.error(f"Field not allowed: {field}")
 
         try:
-            pg = self._get_conn(db_name)
-            qt = _quote_ident(table_name)
-            qf = _quote_ident(field)
-            sql = (
-                f"SELECT COUNT({qf}) as count, MIN({qf}) as min, "
-                f"MAX({qf}) as max, AVG({qf}::numeric) as avg FROM {qt}"
-            )
+            conn = self._get_conn(db_name)
+            driver = self._connections[db_name]["driver"]
+            qt = _quote_ident(table_name, driver)
+            qf = _quote_ident(field, driver)
 
-            with pg.cursor() as cur:
+            if driver == "mysql":
+                sql = (
+                    f"SELECT COUNT({qf}) as count, MIN({qf}) as min, "
+                    f"MAX({qf}) as max, AVG({qf}) as avg FROM {qt}"
+                )
+            else:
+                sql = (
+                    f"SELECT COUNT({qf}) as count, MIN({qf}) as min, "
+                    f"MAX({qf}) as max, AVG({qf}::numeric) as avg FROM {qt}"
+                )
+
+            with conn.cursor() as cur:
                 cur.execute(sql)
                 row = cur.fetchone()
 
@@ -387,7 +418,7 @@ class DbQuery(ModuleInterface):
 
         return None
 
-    def _build_where(self, filters: dict[str, Any], params: list[Any]) -> str:
+    def _build_where(self, filters: dict[str, Any], params: list[Any], driver: str = "postgresql") -> str:
         conditions: list[str] = []
 
         op_map = {
@@ -396,7 +427,7 @@ class DbQuery(ModuleInterface):
         }
 
         for field, ops in filters.items():
-            qf = _quote_ident(field)
+            qf = _quote_ident(field, driver)
             for op, value in ops.items():
                 if op in op_map:
                     conditions.append(f"{qf} {op_map[op]} %s")
@@ -414,50 +445,79 @@ class DbQuery(ModuleInterface):
 
     def _get_conn(self, db_name: str) -> Any:
         if db_name in self._conn_cache:
-            conn = self._conn_cache[db_name]
+            cached = self._conn_cache[db_name]
             try:
-                conn.isolation_level
-                return conn
+                driver = self._connections[db_name]["driver"]
+                if driver == "mysql":
+                    cached.ping(reconnect=False)
+                else:
+                    cached.isolation_level
+                return cached
             except Exception:
                 self._conn_cache.pop(db_name, None)
 
         info = self._connections[db_name]
         if not info["password"]:
-            raise psycopg2.OperationalError(
+            raise RuntimeError(
                 "No password configured (check env file and password_env setting)"
             )
 
-        conn = psycopg2.connect(
-            host=info["host"],
-            port=info["port"],
-            dbname=info["database"],
-            user=info["user"],
-            password=info["password"],
-        )
-        conn.set_session(readonly=True, autocommit=True)
+        if info["driver"] == "mysql":
+            if not _HAS_MYSQL:
+                raise RuntimeError("PyMySQL not installed. Run: pip install pymysql")
+            conn = pymysql.connect(
+                host=info["host"],
+                port=info["port"],
+                database=info["database"],
+                user=info["user"],
+                password=info["password"],
+                charset="utf8mb4",
+                autocommit=True,
+            )
+            with conn.cursor() as cur:
+                cur.execute("SET SESSION TRANSACTION READ ONLY")
+        else:
+            if not _HAS_PG:
+                raise RuntimeError("psycopg2 not installed. Run: pip install psycopg2-binary")
+            conn = psycopg2.connect(
+                host=info["host"],
+                port=info["port"],
+                dbname=info["database"],
+                user=info["user"],
+                password=info["password"],
+            )
+            conn.set_session(readonly=True, autocommit=True)
+
         self._conn_cache[db_name] = conn
         return conn
 
     @staticmethod
     def _format_db_error(e: Exception) -> str:
         msg = str(e)
-        if "password authentication failed" in msg or "No password configured" in msg:
+        if "password authentication failed" in msg or "No password configured" in msg or "Access denied" in msg:
             return "Database authentication failed (check password in env file)"
-        if "Connection refused" in msg or "could not connect" in msg:
+        if "Connection refused" in msg or "could not connect" in msg or "Can't connect" in msg:
             return "Database connection refused (check host/port)"
+        if "Unknown column" in msg:
+            m = re.search(r"Unknown column '([^']+)'", msg)
+            if m:
+                return f"Column does not exist: {m.group(1)} (check allowed_fields in config)"
+            return "Column does not exist (check allowed_fields in config)"
         if "column" in msg and "does not exist" in msg:
             m = re.search(r'column "([^"]+)" does not exist', msg)
             if m:
                 return f"Column does not exist: {m.group(1)} (check allowed_fields in config)"
             return "Column does not exist (check allowed_fields in config)"
-        if "does not exist" in msg:
+        if "does not exist" in msg or "doesn't exist" in msg:
             return "Database or table does not exist"
-        if "permission denied" in msg:
+        if "permission denied" in msg or "command denied" in msg:
             return "Database permission denied (check GRANT SELECT)"
         return "Database query failed"
 
 
-def _quote_ident(name: str) -> str:
+def _quote_ident(name: str, driver: str = "postgresql") -> str:
     if not _IDENT_RE.match(name):
         raise ValueError(f"Invalid identifier: {name}")
+    if driver == "mysql":
+        return f'`{name}`'
     return f'"{name}"'

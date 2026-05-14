@@ -81,6 +81,7 @@ configs:
 databases:
   connections:
     - name: "app_prod"
+      driver: "postgresql"        # "postgresql" (default) or "mysql"
       host: "localhost"
       port: 5432
       database: "app_production"
@@ -100,6 +101,22 @@ databases:
           max_rows: 2000
           allowed_filters: ["endpoint", "method", "status_code", "created_at"]
           allowed_order_by: ["id", "created_at", "response_time_ms"]
+
+    # MySQL connection example
+    # - name: "mysql_prod"
+    #   driver: "mysql"
+    #   host: "localhost"
+    #   port: 3306
+    #   database: "app_production"
+    #   user: "serverlens_readonly"
+    #   password_env: "SL_MYSQL_PASS"
+    #   tables:
+    #     - name: "orders"
+    #       allowed_fields: ["id", "user_id", "status", "total", "created_at"]
+    #       denied_fields: ["payment_token"]
+    #       max_rows: 1000
+    #       allowed_filters: ["id", "user_id", "status", "created_at"]
+    #       allowed_order_by: ["id", "created_at", "total"]
 
 system:
   enabled: true

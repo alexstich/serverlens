@@ -9,7 +9,7 @@ use ServerLens\Mcp\Tool;
 
 final class DbQuery implements ModuleInterface
 {
-    /** @var array<string, array{dsn: string, user: string, password: string, tables: array}> */
+    /** @var array<string, array{driver: string, dsn: string, user: string, password: string, tables: array}> */
     private array $connections = [];
 
     /** @var array<string, \PDO> */
@@ -21,12 +21,17 @@ final class DbQuery implements ModuleInterface
             $passwordEnv = $conn['password_env'] ?? '';
             $password = $passwordEnv ? (getenv($passwordEnv) ?: '') : '';
 
+            $driver = $conn['driver'] ?? 'postgresql';
             $host = $conn['host'] ?? 'localhost';
-            $port = $conn['port'] ?? 5432;
+            $port = $conn['port'] ?? ($driver === 'mysql' ? 3306 : 5432);
             $database = $conn['database'] ?? '';
             $user = $conn['user'] ?? '';
 
-            $dsn = "pgsql:host={$host};port={$port};dbname={$database}";
+            if ($driver === 'mysql') {
+                $dsn = "mysql:host={$host};port={$port};dbname={$database};charset=utf8mb4";
+            } else {
+                $dsn = "pgsql:host={$host};port={$port};dbname={$database}";
+            }
 
             $tables = [];
             foreach ($conn['tables'] ?? [] as $table) {
@@ -40,6 +45,7 @@ final class DbQuery implements ModuleInterface
             }
 
             $this->connections[$conn['name']] = [
+                'driver' => $driver,
                 'dsn' => $dsn,
                 'user' => $user,
                 'password' => $password,
@@ -150,6 +156,7 @@ final class DbQuery implements ModuleInterface
 
             $entry = [
                 'database' => $name,
+                'driver' => $conn['driver'],
                 'connection_status' => $connStatus,
                 'has_password' => $hasPassword,
                 'tables' => $tables,
@@ -225,14 +232,15 @@ final class DbQuery implements ModuleInterface
 
         try {
             $pdo = $this->getPdo($dbName);
+            $driver = $this->connections[$dbName]['driver'];
 
-            $quotedFields = array_map(fn($f) => $this->quoteIdentifier($f), $fields);
-            $quotedTable = $this->quoteIdentifier($tableName);
+            $quotedFields = array_map(fn($f) => $this->quoteIdentifier($f, $driver), $fields);
+            $quotedTable = $this->quoteIdentifier($tableName, $driver);
 
             $sql = "SELECT " . implode(', ', $quotedFields) . " FROM {$quotedTable}";
             $params = [];
 
-            $whereClause = $this->buildWhereClause($filters, $params);
+            $whereClause = $this->buildWhereClause($filters, $params, $driver);
             if ($whereClause) {
                 $sql .= " WHERE {$whereClause}";
             }
@@ -245,7 +253,7 @@ final class DbQuery implements ModuleInterface
                         $dir = 'DESC';
                         $field = substr($field, 1);
                     }
-                    $orderParts[] = $this->quoteIdentifier($field) . " {$dir}";
+                    $orderParts[] = $this->quoteIdentifier($field, $driver) . " {$dir}";
                 }
                 $sql .= " ORDER BY " . implode(', ', $orderParts);
             }
@@ -296,11 +304,12 @@ final class DbQuery implements ModuleInterface
 
         try {
             $pdo = $this->getPdo($dbName);
-            $quotedTable = $this->quoteIdentifier($tableName);
+            $driver = $this->connections[$dbName]['driver'];
+            $quotedTable = $this->quoteIdentifier($tableName, $driver);
             $params = [];
 
             $sql = "SELECT COUNT(*) as count FROM {$quotedTable}";
-            $whereClause = $this->buildWhereClause($filters, $params);
+            $whereClause = $this->buildWhereClause($filters, $params, $driver);
             if ($whereClause) {
                 $sql .= " WHERE {$whereClause}";
             }
@@ -344,15 +353,25 @@ final class DbQuery implements ModuleInterface
 
         try {
             $pdo = $this->getPdo($dbName);
-            $quotedTable = $this->quoteIdentifier($tableName);
-            $quotedField = $this->quoteIdentifier($field);
+            $driver = $this->connections[$dbName]['driver'];
+            $quotedTable = $this->quoteIdentifier($tableName, $driver);
+            $quotedField = $this->quoteIdentifier($field, $driver);
 
-            $sql = "SELECT 
-                COUNT({$quotedField}) as count,
-                MIN({$quotedField}) as min,
-                MAX({$quotedField}) as max,
-                AVG({$quotedField}::numeric) as avg
-                FROM {$quotedTable}";
+            if ($driver === 'mysql') {
+                $sql = "SELECT
+                    COUNT({$quotedField}) as count,
+                    MIN({$quotedField}) as min,
+                    MAX({$quotedField}) as max,
+                    AVG({$quotedField}) as avg
+                    FROM {$quotedTable}";
+            } else {
+                $sql = "SELECT
+                    COUNT({$quotedField}) as count,
+                    MIN({$quotedField}) as min,
+                    MAX({$quotedField}) as max,
+                    AVG({$quotedField}::numeric) as avg
+                    FROM {$quotedTable}";
+            }
 
             $stmt = $pdo->query($sql);
             $row = $stmt->fetch(\PDO::FETCH_ASSOC);
@@ -480,13 +499,13 @@ final class DbQuery implements ModuleInterface
         return null;
     }
 
-    private function buildWhereClause(array $filters, array &$params): string
+    private function buildWhereClause(array $filters, array &$params, string $driver = 'postgresql'): string
     {
         $conditions = [];
         $paramIdx = 0;
 
         foreach ($filters as $field => $ops) {
-            $quotedField = $this->quoteIdentifier($field);
+            $quotedField = $this->quoteIdentifier($field, $driver);
 
             foreach ($ops as $op => $value) {
                 $paramName = ":p{$paramIdx}";
@@ -574,17 +593,24 @@ final class DbQuery implements ModuleInterface
             \PDO::ATTR_EMULATE_PREPARES => false,
         ]);
 
-        $pdo->exec("SET default_transaction_read_only = on");
+        if ($conn['driver'] === 'mysql') {
+            $pdo->exec("SET SESSION TRANSACTION READ ONLY");
+        } else {
+            $pdo->exec("SET default_transaction_read_only = on");
+        }
 
         $this->pdoCache[$dbName] = $pdo;
 
         return $pdo;
     }
 
-    private function quoteIdentifier(string $name): string
+    private function quoteIdentifier(string $name, string $driver = 'postgresql'): string
     {
         if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $name)) {
             throw new \InvalidArgumentException("Invalid identifier: {$name}");
+        }
+        if ($driver === 'mysql') {
+            return '`' . $name . '`';
         }
         return '"' . $name . '"';
     }
@@ -592,11 +618,17 @@ final class DbQuery implements ModuleInterface
     private function formatDbError(\PDOException $e): string
     {
         $msg = $e->getMessage();
-        if (str_contains($msg, 'password authentication failed') || str_contains($msg, 'No password configured')) {
+        if (str_contains($msg, 'password authentication failed') || str_contains($msg, 'No password configured') || str_contains($msg, 'Access denied')) {
             return "Database authentication failed (check password in env file)";
         }
-        if (str_contains($msg, 'Connection refused') || str_contains($msg, 'could not connect')) {
+        if (str_contains($msg, 'Connection refused') || str_contains($msg, 'could not connect') || str_contains($msg, "Can't connect")) {
             return "Database connection refused (check host/port)";
+        }
+        if (str_contains($msg, 'Unknown column')) {
+            if (preg_match("/Unknown column '([^']+)'/", $msg, $m)) {
+                return "Column does not exist: {$m[1]} (check allowed_fields in config)";
+            }
+            return "Column does not exist (check allowed_fields in config)";
         }
         if (str_contains($msg, 'column') && str_contains($msg, 'does not exist')) {
             if (preg_match('/column "([^"]+)" does not exist/', $msg, $m)) {
@@ -604,10 +636,10 @@ final class DbQuery implements ModuleInterface
             }
             return "Column does not exist (check allowed_fields in config)";
         }
-        if (str_contains($msg, 'does not exist')) {
+        if (str_contains($msg, 'does not exist') || str_contains($msg, "doesn't exist")) {
             return "Database or table does not exist";
         }
-        if (str_contains($msg, 'permission denied')) {
+        if (str_contains($msg, 'permission denied') || str_contains($msg, 'command denied')) {
             return "Database permission denied (check GRANT SELECT)";
         }
         return "Database query failed";
