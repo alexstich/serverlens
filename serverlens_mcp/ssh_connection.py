@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import shlex
 import subprocess
 import sys
 from typing import Any
+
+SSH_CONNECT_TIMEOUT = 10
+READ_TIMEOUT = 30
+INIT_READ_TIMEOUT = 15
 
 
 class SshConnection:
@@ -43,7 +48,7 @@ class SshConnection:
             "protocolVersion": "2024-11-05",
             "capabilities": {},
             "clientInfo": {"name": "serverlens-mcp-proxy", "version": "1.0.0"},
-        })
+        }, timeout=INIT_READ_TIMEOUT)
 
         if response is None:
             print(f"[MCP:{self._name}] Initialize failed: no response", file=sys.stderr)
@@ -107,6 +112,7 @@ class SshConnection:
 
     def _send_request(
         self, method: str, params: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> dict[str, Any] | None:
         msg_id = self._request_id
         self._request_id += 1
@@ -127,7 +133,7 @@ class SshConnection:
             self._drain_stderr()
             return None
 
-        return self._read_response()
+        return self._read_response(timeout=timeout or READ_TIMEOUT)
 
     def _send_notification(self, method: str, params: dict[str, Any] | None = None) -> None:
         message: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
@@ -142,10 +148,19 @@ class SshConnection:
         except (OSError, AssertionError):
             pass
 
-    def _read_response(self) -> dict[str, Any] | None:
+    def _read_response(self, timeout: float = READ_TIMEOUT) -> dict[str, Any] | None:
         try:
             assert self._process and self._process.stdout
-            raw = self._process.stdout.readline()
+            fd = self._process.stdout
+            ready, _, _ = select.select([fd], [], [], timeout)
+            if not ready:
+                print(
+                    f"[MCP:{self._name}] Read timeout ({timeout}s) — remote serverlens did not respond",
+                    file=sys.stderr,
+                )
+                self._drain_stderr()
+                return None
+            raw = fd.readline()
             if not raw:
                 self._drain_stderr()
                 return None
@@ -159,8 +174,6 @@ class SshConnection:
         if not self._process or not self._process.stderr:
             return
         try:
-            import select
-
             while select.select([self._process.stderr], [], [], 0)[0]:
                 line = self._process.stderr.readline()
                 if not line:
@@ -185,6 +198,8 @@ class SshConnection:
         parts = ["ssh"]
         parts.append("-o BatchMode=yes")
         parts.append("-o StrictHostKeyChecking=accept-new")
+        parts.append(f"-o ConnectTimeout={SSH_CONNECT_TIMEOUT}")
+        parts.append("-o ConnectionAttempts=1")
         parts.append("-o ServerAliveInterval=15")
         parts.append("-o ServerAliveCountMax=3")
 
