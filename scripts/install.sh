@@ -1051,6 +1051,24 @@ phase_wizard() {
             echo ""
         fi
     fi
+
+    if [[ " ${FOUND_SERVICES[*]} " == *" mysql "* ]] || command -v mysql &>/dev/null; then
+        echo ""
+        if ask_yn "Configure MySQL connection?" "y"; then
+            local mysql_script="${SCRIPT_DIR}/scripts/setup_mysql.sh"
+            if [[ -f "$mysql_script" ]]; then
+                bash "$mysql_script"
+            else
+                warn "Script ${mysql_script} not found, skipping"
+                echo ""
+                info "This script creates a read-only MySQL user for monitoring."
+                info "Run it later from the project directory:"
+                echo ""
+                echo "    cd ${SCRIPT_DIR} && sudo bash scripts/setup_mysql.sh"
+                echo ""
+            fi
+        fi
+    fi
 }
 
 phase_default_config() {
