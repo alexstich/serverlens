@@ -85,7 +85,7 @@ check_prerequisites() {
     [[ -f "${CONFIG_DIR}/config.yaml" ]] || warn "Config ${CONFIG_DIR}/config.yaml not found"
 
     local python_cmd=""
-    for cmd in python3 python; do
+    for cmd in python3.13 python3.12 python3.11 python3.10 python3 python; do
         if command -v "$cmd" &>/dev/null; then
             python_cmd="$cmd"
             break

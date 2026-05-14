@@ -890,7 +890,7 @@ phase_checks() {
     [[ "$(id -u)" -ne 0 ]] && fail "Run as root: sudo bash scripts/install.sh"
 
     local python_cmd=""
-    for cmd in python3 python; do
+    for cmd in python3.13 python3.12 python3.11 python3.10 python3 python; do
         if command -v "$cmd" &>/dev/null; then
             python_cmd="$cmd"
             break
@@ -905,6 +905,13 @@ phase_checks() {
     py_minor=$($python_cmd -c 'import sys; print(sys.version_info.minor)')
 
     if (( py_major < 3 || (py_major == 3 && py_minor < 10) )); then
+        echo ""
+        info "On Ubuntu 20.04 / Debian, install via deadsnakes PPA:"
+        echo ""
+        echo "    sudo add-apt-repository ppa:deadsnakes/ppa"
+        echo "    sudo apt update"
+        echo "    sudo apt install python3.12 python3.12-venv"
+        echo ""
         fail "Python 3.10+ required, found ${py_version}"
     fi
     ok "Python ${py_version}"
@@ -966,7 +973,7 @@ phase_dependencies() {
     echo -e "\n${BOLD}[5/7] Python dependencies${NC}"
 
     local python_cmd=""
-    for cmd in python3 python; do
+    for cmd in python3.13 python3.12 python3.11 python3.10 python3 python; do
         if command -v "$cmd" &>/dev/null; then
             python_cmd="$cmd"
             break
