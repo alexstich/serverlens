@@ -78,6 +78,12 @@ configs:
       path: "/etc/postgresql/16/main/pg_hba.conf"
       redact: []
 
+    - name: "mysql_conf"
+      path: "/etc/mysql/conf.d/"
+      type: "directory"
+      redact:
+        - "password"
+
 databases:
   connections:
     - name: "app_prod"
