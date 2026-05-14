@@ -116,10 +116,10 @@ trap cleanup_defaults EXIT
 setup_connection() {
     echo -e "\n${BOLD}  MySQL connection${NC}\n"
 
-    if [[ "$(id -u)" -eq 0 ]] && mysql -u root -e "SELECT 1" &>/dev/null 2>&1; then
-        MY_CMD="mysql -u root"
+    if [[ "$(id -u)" -eq 0 ]] && mysql --no-defaults -u root -e "SELECT 1" &>/dev/null 2>&1; then
+        MY_CMD="mysql --no-defaults -u root"
         local detected_port
-        detected_port=$(mysql -u root -N -B -e "SELECT @@port" 2>/dev/null | tr -d '[:space:]')
+        detected_port=$($MY_CMD -N -B -e "SELECT @@port" 2>/dev/null | tr -d '[:space:]')
         if [[ -n "$detected_port" ]]; then
             MY_PORT="$detected_port"
         fi
@@ -127,7 +127,6 @@ setup_connection() {
         return
     fi
 
-    warn "Socket connection failed."
     info "Enter MySQL superuser credentials to create the read-only user"
     info "(needed once — to create the monitoring user and grant permissions):"
     echo ""
@@ -144,9 +143,9 @@ setup_connection() {
     printf '[client]\npassword=%s\n' "$my_pass" > "$MY_DEFAULTS"
 
     if [[ "$MY_HOST" == "localhost" || "$MY_HOST" == "127.0.0.1" ]]; then
-        MY_CMD="mysql --defaults-extra-file=${MY_DEFAULTS} -u ${my_user}"
+        MY_CMD="mysql --defaults-file=${MY_DEFAULTS} -u ${my_user}"
     else
-        MY_CMD="mysql --defaults-extra-file=${MY_DEFAULTS} -h ${MY_HOST} -P ${MY_PORT} -u ${my_user}"
+        MY_CMD="mysql --defaults-file=${MY_DEFAULTS} -h ${MY_HOST} -P ${MY_PORT} -u ${my_user}"
         MY_USER_HOST="%"
     fi
 
