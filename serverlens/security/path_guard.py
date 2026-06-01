@@ -13,8 +13,12 @@ class PathGuard:
     def register_sources(self, sources: list[dict[str, Any]]) -> None:
         for source in sources:
             name = source["name"]
-            path = source["path"]
             src_type = source.get("type", "file")
+            if src_type == "docker":
+                continue
+            path = source.get("path", "")
+            if not path:
+                continue
 
             resolved = self._realpath(path)
             if resolved is None:

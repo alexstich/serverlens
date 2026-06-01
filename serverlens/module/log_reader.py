@@ -4,6 +4,8 @@ import glob
 import json
 import os
 import re
+import subprocess
+import sys
 import time
 from datetime import datetime
 from typing import Any
@@ -24,6 +26,7 @@ class LogReader(ModuleInterface):
     def __init__(self, config: Config) -> None:
         self._sources: dict[str, dict[str, Any]] = {}
         self._dir_sources: dict[str, dict[str, Any]] = {}
+        self._docker_sources: dict[str, dict[str, Any]] = {}
         self._path_guard = PathGuard()
 
         for source in config.get_log_sources():
@@ -35,6 +38,23 @@ class LogReader(ModuleInterface):
                     "format": source.get("format", "plain"),
                     "max_lines": int(source.get("max_lines", 5000)),
                 }
+            elif src_type == "docker":
+                container = source.get("container", "")
+                if not container:
+                    print(
+                        f"[ServerLens] Warning: docker source '{source['name']}' missing 'container' field",
+                        file=sys.stderr,
+                    )
+                    continue
+                self._docker_sources[source["name"]] = {
+                    "container": container,
+                    "format": source.get("format", "plain"),
+                    "max_lines": int(source.get("max_lines", 5000)),
+                }
+                print(
+                    f"[ServerLens] Docker log source: {source['name']} -> container '{container}'",
+                    file=sys.stderr,
+                )
             else:
                 self._sources[source["name"]] = {
                     "path": source["path"],
@@ -42,7 +62,8 @@ class LogReader(ModuleInterface):
                     "max_lines": int(source.get("max_lines", 5000)),
                 }
 
-        self._path_guard.register_sources(config.get_log_sources())
+        non_docker = [s for s in config.get_log_sources() if s.get("type", "file") != "docker"]
+        self._path_guard.register_sources(non_docker)
 
     def get_tools(self) -> list[Tool]:
         return [
@@ -114,6 +135,16 @@ class LogReader(ModuleInterface):
                 "available": available,
             })
 
+        for name, ds in self._docker_sources.items():
+            result.append({
+                "name": name,
+                "type": "docker",
+                "container": ds["container"],
+                "format": ds["format"],
+                "max_lines": ds["max_lines"],
+                "available": self._docker_available(ds["container"]),
+            })
+
         for name, ds in self._dir_sources.items():
             dir_path = ds["path"]
             available = os.path.isdir(dir_path) and os.access(dir_path, os.R_OK)
@@ -148,13 +179,20 @@ class LogReader(ModuleInterface):
     def _tail(self, args: dict[str, Any]) -> ToolResult:
         source = args.get("source", "")
         lines = min(int(args.get("lines", 100)), 500)
+        max_lines = self._get_max_lines(source)
+        lines = min(lines, max_lines)
+
+        if self._is_docker_source(source):
+            ds = self._docker_sources[source]
+            output = self._docker_logs(ds["container"], tail=lines)
+            if output is None:
+                return self.error(f"Cannot read Docker logs for container: {ds['container']}")
+            result_lines = output.rstrip("\n").split("\n") if output.strip() else []
+            return self.ok("\n".join(result_lines[-lines:]))
 
         path = self._resolve_source(source)
         if path is None:
             return self.error(f"Unknown or inaccessible log source: {source}")
-
-        max_lines = self._get_max_lines(source)
-        lines = min(lines, max_lines)
         result = _read_last_lines(path, lines)
         return self.ok("\n".join(result))
 
@@ -167,10 +205,6 @@ class LogReader(ModuleInterface):
         if not query:
             return self.error("Query must not be empty")
 
-        path = self._resolve_source(source)
-        if path is None:
-            return self.error(f"Unknown or inaccessible log source: {source}")
-
         if use_regex:
             try:
                 pattern = re.compile(query)
@@ -179,7 +213,30 @@ class LogReader(ModuleInterface):
         else:
             pattern = None
 
-        matches: list[str] = []
+        if self._is_docker_source(source):
+            ds = self._docker_sources[source]
+            output = self._docker_logs(ds["container"])
+            if output is None:
+                return self.error(f"Cannot read Docker logs for container: {ds['container']}")
+            matches: list[str] = []
+            for raw_line in output.split("\n"):
+                if len(matches) >= max_lines:
+                    break
+                line = raw_line.rstrip("\r")
+                if pattern is not None:
+                    if pattern.search(line):
+                        matches.append(line)
+                elif query in line:
+                    matches.append(line)
+            if not matches:
+                return self.ok(f"No matches found for query: {query}")
+            return self.ok("\n".join(matches))
+
+        path = self._resolve_source(source)
+        if path is None:
+            return self.error(f"Unknown or inaccessible log source: {source}")
+
+        matches = []
         start = time.monotonic()
         timeout = 5.0
 
@@ -206,6 +263,21 @@ class LogReader(ModuleInterface):
 
     def _count(self, args: dict[str, Any]) -> ToolResult:
         source = args.get("source", "")
+
+        if self._is_docker_source(source):
+            ds = self._docker_sources[source]
+            output = self._docker_logs(ds["container"])
+            if output is None:
+                return self.error(f"Cannot read Docker logs for container: {ds['container']}")
+            line_count = output.count("\n")
+            info = {
+                "source": source,
+                "type": "docker",
+                "container": ds["container"],
+                "lines": line_count,
+            }
+            return self.ok(json.dumps(info, indent=2))
+
         path = self._resolve_source(source)
         if path is None:
             return self.error(f"Unknown or inaccessible log source: {source}")
@@ -240,6 +312,18 @@ class LogReader(ModuleInterface):
         to_ts = _parse_timestamp(to_str)
         if from_ts is None or to_ts is None:
             return self.error("Invalid date format. Use ISO 8601 or common format.")
+
+        if self._is_docker_source(source):
+            ds = self._docker_sources[source]
+            from_dt = datetime.fromtimestamp(from_ts).strftime("%Y-%m-%dT%H:%M:%S")
+            to_dt = datetime.fromtimestamp(to_ts).strftime("%Y-%m-%dT%H:%M:%S")
+            output = self._docker_logs(ds["container"], since=from_dt, until=to_dt)
+            if output is None:
+                return self.error(f"Cannot read Docker logs for container: {ds['container']}")
+            result_lines = output.rstrip("\n").split("\n") if output.strip() else []
+            if not result_lines:
+                return self.ok("No entries found in the specified time range")
+            return self.ok("\n".join(result_lines[:max_lines]))
 
         path = self._resolve_source(source)
         if path is None:
@@ -289,9 +373,42 @@ class LogReader(ModuleInterface):
 
         return None
 
+    def _is_docker_source(self, name: str) -> bool:
+        return name in self._docker_sources
+
+    def _docker_logs(self, container: str, tail: int | None = None,
+                     since: str | None = None, until: str | None = None) -> str | None:
+        cmd = ["docker", "logs"]
+        if tail is not None:
+            cmd += ["--tail", str(tail)]
+        if since:
+            cmd += ["--since", since]
+        if until:
+            cmd += ["--until", until]
+        cmd.append(container)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            if result.returncode != 0:
+                return None
+            return (result.stdout or "") + (result.stderr or "")
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+
+    def _docker_available(self, container: str) -> bool:
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "--format", "{{.State.Running}}", container],
+                capture_output=True, text=True, timeout=5,
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, OSError):
+            return False
+
     def _get_max_lines(self, source: str) -> int:
         if source in self._sources:
             return self._sources[source]["max_lines"]
+        if source in self._docker_sources:
+            return self._docker_sources[source]["max_lines"]
         if "/" in source:
             dir_name = source.split("/", 1)[0]
             ds = self._dir_sources.get(dir_name)

@@ -47,6 +47,14 @@ logs:
       format: "postgres"
       max_lines: 2000
 
+    # Docker container logs (resolves log path automatically via docker inspect)
+    # Survives container rebuilds — uses container name, not container ID
+    # - name: "myapp_docker"
+    #   type: "docker"
+    #   container: "myproject-app-1"
+    #   format: "plain"
+    #   max_lines: 5000
+
     # Logs in a directory (automatic file listing)
     # Handy for logs with daily rotation
     # - name: "app_api_logs"
