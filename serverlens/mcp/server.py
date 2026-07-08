@@ -24,6 +24,10 @@ class Server:
         for tool in module.get_tools():
             self._tools[tool.name] = {"tool": tool, "module": module}
 
+    def reset_modules(self) -> None:
+        """Drop all registered tools (used before a config reload)."""
+        self._tools = {}
+
     def handle_message(
         self, message: dict[str, Any], client_ip: str = "127.0.0.1"
     ) -> dict[str, Any] | None:

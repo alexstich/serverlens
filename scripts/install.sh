@@ -1100,6 +1100,14 @@ WRAPPER
     chmod +x /usr/local/bin/serverlens
     ok "CLI wrapper: /usr/local/bin/serverlens"
 
+    # Privileged control-plane editor (config mutations, run via sudo).
+    cat > /usr/local/bin/serverlens-admin <<WRAPPER
+#!/bin/bash
+exec "${INSTALL_DIR}/venv/bin/python" -m serverlens.admin "\$@"
+WRAPPER
+    chmod +x /usr/local/bin/serverlens-admin
+    ok "CLI wrapper: /usr/local/bin/serverlens-admin"
+
     if [[ -f "${SCRIPT_DIR}/etc/serverlens.service" ]]; then
         cp "${SCRIPT_DIR}/etc/serverlens.service" /etc/systemd/system/serverlens.service
         systemctl daemon-reload

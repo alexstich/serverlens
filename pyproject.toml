@@ -24,6 +24,7 @@ dev = [
 
 [project.scripts]
 serverlens = "serverlens.__main__:main"
+serverlens-admin = "serverlens.admin.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["serverlens*", "serverlens_mcp*"]
