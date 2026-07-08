@@ -1049,7 +1049,8 @@ phase_wizard() {
     if ask_yn "Configure PostgreSQL connection?" "y"; then
         local db_script="${SCRIPT_DIR}/scripts/setup_db.sh"
         if [[ -f "$db_script" ]]; then
-            bash "$db_script"
+            # Optional step — must not abort the installer (e.g. psql missing).
+            bash "$db_script" || warn "PostgreSQL setup skipped/failed — run later: sudo bash scripts/setup_db.sh"
         else
             warn "Script ${db_script} not found, skipping"
             echo ""
@@ -1066,7 +1067,8 @@ phase_wizard() {
         if ask_yn "Configure MySQL connection?" "y"; then
             local mysql_script="${SCRIPT_DIR}/scripts/setup_mysql.sh"
             if [[ -f "$mysql_script" ]]; then
-                bash "$mysql_script"
+                # Optional step — must not abort the installer (e.g. mysql client missing).
+                bash "$mysql_script" || warn "MySQL setup skipped/failed — run later: sudo bash scripts/setup_mysql.sh"
             else
                 warn "Script ${mysql_script} not found, skipping"
                 echo ""
