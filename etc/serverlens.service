@@ -8,6 +8,8 @@ Type=simple
 User=serverlens
 Group=serverlens
 ExecStart=/opt/serverlens/venv/bin/python -m serverlens serve --config /etc/serverlens/config.yaml
+# Hot-reload the whitelist without dropping the process (used by serverlens-admin).
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10
