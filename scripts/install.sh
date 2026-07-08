@@ -66,11 +66,20 @@ ask_input() {
     local prompt="$1" default="${2:-}" answer
     if [[ -n "$default" ]]; then
         read -rp "  $prompt [$default]: " answer
-        echo "${answer:-$default}"
+        answer="${answer:-$default}"
     else
         read -rp "  $prompt: " answer
-        echo "$answer"
     fi
+    # Trim surrounding whitespace and a single pair of surrounding quotes, so
+    # inputs like  'all'  or  " all "  are treated as intended (otherwise they
+    # fall through to numeric parsing and abort the installer under set -e).
+    answer="${answer#"${answer%%[![:space:]]*}"}"
+    answer="${answer%"${answer##*[![:space:]]}"}"
+    case "$answer" in
+        \'*\') answer="${answer#\'}"; answer="${answer%\'}" ;;
+        \"*\") answer="${answer#\"}"; answer="${answer%\"}" ;;
+    esac
+    echo "$answer"
 }
 
 WIZARD=true
@@ -439,7 +448,7 @@ wizard_logs() {
         elif [[ -n "$sel" ]]; then
             IFS=',' read -ra nums <<< "$sel"
             for n in "${nums[@]}"; do
-                n=$(( ${n// /} - 1 ))
+                n="${n//[^0-9]/}"; [[ -z "$n" ]] && continue; n=$(( n - 1 ))
                 if (( n >= 0 && n < ${#found_logs[@]} )); then append_log "${found_names[$n]}" "${found_logs[$n]}" "${found_formats[$n]}"; fi
             done
         fi
@@ -692,7 +701,7 @@ wizard_configs() {
         elif [[ -n "$sel" ]]; then
             IFS=',' read -ra nums <<< "$sel"
             for n in "${nums[@]}"; do
-                n=$(( ${n// /} - 1 ))
+                n="${n//[^0-9]/}"; [[ -z "$n" ]] && continue; n=$(( n - 1 ))
                 if (( n >= 0 && n < ${#found_cfgs[@]} )); then append_config "${found_cfg_names[$n]}" "${found_cfgs[$n]}" "${found_cfg_redacts[$n]}"; fi
             done
         fi
@@ -769,7 +778,7 @@ wizard_system() {
         elif [[ -n "$sel" ]]; then
             IFS=',' read -ra nums <<< "$sel"
             for n in "${nums[@]}"; do
-                n=$(( ${n// /} - 1 ))
+                n="${n//[^0-9]/}"; [[ -z "$n" ]] && continue; n=$(( n - 1 ))
                 if (( n >= 0 && n < ${#FOUND_WORKERS[@]} )); then
                     SYSTEM_SVC_YAML+="    - \"${FOUND_WORKERS[$n]}\"\n"
                 fi
@@ -797,7 +806,7 @@ wizard_system() {
             elif [[ -n "$ssel" ]]; then
                 IFS=',' read -ra nums <<< "$ssel"
                 for n in "${nums[@]}"; do
-                    n=$(( ${n// /} - 1 ))
+                    n="${n//[^0-9]/}"; [[ -z "$n" ]] && continue; n=$(( n - 1 ))
                     if (( n >= 0 && n < ${#stack_list[@]} )); then
                         DOCKER_YAML+="    - \"${stack_list[$n]}\"\n"
                     fi
@@ -1017,12 +1026,12 @@ phase_wizard() {
 
         echo ""
         local sel; sel=$(ask_input "Which services to monitor? (all / comma-separated numbers / Enter = all)" "all")
-        if [[ "$sel" == "all" ]]; then
+        if [[ "${sel,,}" == "all" ]]; then
             SELECTED_SERVICES=("${FOUND_SERVICES[@]}")
         elif [[ -n "$sel" ]]; then
             IFS=',' read -ra nums <<< "$sel"
             for n in "${nums[@]}"; do
-                n=$(( ${n// /} - 1 ))
+                n="${n//[^0-9]/}"; [[ -z "$n" ]] && continue; n=$(( n - 1 ))
                 if (( n >= 0 && n < ${#FOUND_SERVICES[@]} )); then SELECTED_SERVICES+=("${FOUND_SERVICES[$n]}"); fi
             done
         fi
