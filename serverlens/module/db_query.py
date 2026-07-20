@@ -95,6 +95,20 @@ class DbQuery(ModuleInterface):
                 },
                 "required": ["database", "table"],
             }),
+            Tool("db_aggregate", "Aggregate records grouped by fields (no raw SQL). Find duplicates: group_by + having_min_count=2", {
+                "type": "object",
+                "properties": {
+                    "database": {"type": "string", "description": "Database connection name"},
+                    "table": {"type": "string", "description": "Table name"},
+                    "group_by": {"type": "array", "items": {"type": "string"}, "description": "Fields to group by (must be in allowed_fields)"},
+                    "aggregate": {"type": "string", "description": 'Aggregate function (only "count" for now)', "enum": ["count"], "default": "count"},
+                    "filters": {"type": "object", "description": "Filter conditions: {field: {op: value}}. Same operators as db_query"},
+                    "having_min_count": {"type": "integer", "description": "Only return groups with count >= X (optional)"},
+                    "order": {"type": "string", "description": "Sort by group count", "enum": ["count_desc", "count_asc"], "default": "count_desc"},
+                    "limit": {"type": "integer", "description": "Max groups to return (capped at table max_rows)"},
+                },
+                "required": ["database", "table", "group_by"],
+            }),
             Tool("db_stats", "Get basic statistics for a numeric field (COUNT, MIN, MAX, AVG)", {
                 "type": "object",
                 "properties": {
@@ -112,6 +126,7 @@ class DbQuery(ModuleInterface):
             "db_describe": self._describe,
             "db_query": self._query,
             "db_count": self._count,
+            "db_aggregate": self._aggregate,
             "db_stats": self._stats,
         }
         handler = dispatch.get(name)
@@ -291,6 +306,68 @@ class DbQuery(ModuleInterface):
             print(f"[ServerLens] DB error: {e}", file=sys.stderr)
             return self.error(self._format_db_error(e))
 
+    def _aggregate(self, args: dict[str, Any]) -> ToolResult:
+        db_name = self._resolve_db_name(args.get("database", ""))
+        if db_name is None:
+            return self._db_not_found_error(args.get("database", ""))
+
+        table_name = args.get("table", "")
+        group_by = args.get("group_by", []) or []
+        aggregate_fn = args.get("aggregate", "count")
+        filters: dict[str, Any] = args.get("filters", {}) or {}
+        having_min_count = args.get("having_min_count")
+        order = args.get("order", "count_desc")
+        limit = int(args.get("limit", 100))
+
+        tc = self._connections[db_name]["tables"].get(table_name)
+        if tc is None:
+            return self._table_not_found_error(db_name, table_name)
+
+        err = self._validate_aggregate_params(group_by, aggregate_fn, filters, having_min_count, order, tc)
+        if err:
+            return self.error(err)
+
+        if having_min_count is not None:
+            having_min_count = int(float(having_min_count))
+
+        try:
+            conn = self._get_conn(db_name)
+            driver = self._connections[db_name]["driver"]
+            params: list[Any] = []
+
+            sql = self._build_aggregate_sql(
+                table_name, group_by, filters, having_min_count,
+                order, limit, tc["max_rows"], driver, params,
+            )
+
+            if driver == "mysql":
+                with conn.cursor(pymysql.cursors.DictCursor) as cur:
+                    cur.execute(sql, params)
+                    rows = [dict(r) for r in cur.fetchall()]
+            else:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(sql, params)
+                    rows = [dict(r) for r in cur.fetchall()]
+
+            for row in rows:
+                for k, v in row.items():
+                    if not isinstance(v, (str, int, float, bool, type(None))):
+                        row[k] = str(v)
+
+            result = {
+                "database": db_name,
+                "table": table_name,
+                "group_by": group_by,
+                "aggregate": aggregate_fn,
+                "groups_returned": len(rows),
+                "data": rows,
+            }
+            return self.ok(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+
+        except Exception as e:
+            print(f"[ServerLens] DB error: {e}", file=sys.stderr)
+            return self.error(self._format_db_error(e))
+
     def _stats(self, args: dict[str, Any]) -> ToolResult:
         db_name = self._resolve_db_name(args.get("database", ""))
         if db_name is None:
@@ -418,6 +495,76 @@ class DbQuery(ModuleInterface):
 
         return None
 
+    def _validate_aggregate_params(
+        self,
+        group_by: Any,
+        aggregate_fn: Any,
+        filters: dict[str, Any],
+        having_min_count: Any,
+        order: Any,
+        tc: dict[str, Any],
+    ) -> str | None:
+        if not isinstance(group_by, list) or not group_by:
+            return "group_by must be a non-empty array of fields"
+
+        allowed = self._resolve_allowed_fields(tc)
+        is_wildcard = allowed == ["*"]
+        denied = tc["denied_fields"]
+
+        for field in group_by:
+            if not isinstance(field, str) or not _IDENT_RE.match(field):
+                return f"Invalid group_by field: {field}"
+            if not is_wildcard and field not in allowed:
+                return f"Group by field not allowed: {field}"
+            if field in denied:
+                return f"Access denied to field: {field}"
+
+        if aggregate_fn != "count":
+            return f"Invalid aggregate function: {aggregate_fn}. Supported: count"
+
+        if having_min_count is not None and not _is_positive_count(having_min_count):
+            return "having_min_count must be a positive integer"
+
+        if order not in ("count_desc", "count_asc"):
+            return f"Invalid order: {order}. Allowed: [count_desc, count_asc]"
+
+        return self._validate_filters(filters, tc)
+
+    def _build_aggregate_sql(
+        self,
+        table_name: str,
+        group_by: list[str],
+        filters: dict[str, Any],
+        having_min_count: int | None,
+        order: str,
+        limit: int,
+        max_rows: int,
+        driver: str,
+        params: list[Any],
+    ) -> str:
+        quoted_table = _quote_ident(table_name, driver)
+        group_by_clause = ", ".join(_quote_ident(f, driver) for f in group_by)
+
+        sql = f"SELECT {group_by_clause}, COUNT(*) AS count FROM {quoted_table}"
+
+        where = self._build_where(filters, params, driver)
+        if where:
+            sql += f" WHERE {where}"
+
+        sql += f" GROUP BY {group_by_clause}"
+
+        if having_min_count is not None:
+            sql += " HAVING COUNT(*) >= %s"
+            params.append(having_min_count)
+
+        direction = "ASC" if order == "count_asc" else "DESC"
+        sql += f" ORDER BY COUNT(*) {direction}"
+
+        sql += " LIMIT %s"
+        params.append(min(max(limit, 1), max_rows))
+
+        return sql
+
     def _build_where(self, filters: dict[str, Any], params: list[Any], driver: str = "postgresql") -> str:
         conditions: list[str] = []
 
@@ -513,6 +660,15 @@ class DbQuery(ModuleInterface):
         if "permission denied" in msg or "command denied" in msg:
             return "Database permission denied (check GRANT SELECT)"
         return "Database query failed"
+
+
+def _is_positive_count(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        return float(value) >= 1
+    except (TypeError, ValueError):
+        return False
 
 
 def _quote_ident(name: str, driver: str = "postgresql") -> str:

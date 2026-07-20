@@ -101,6 +101,7 @@ MCP server running on the remote host.
 | **ConfigReader** | Read configs (secrets redacted) | Whitelisted files |
 | **DbQuery** | Safe database queries | PostgreSQL (read-only user) |
 | **SystemInfo** | System state | shell_exec (systemctl, docker, free, df) |
+| **JournalReader** | Read systemd journal (whitelisted units) | shell_exec (journalctl --no-pager) |
 
 **Security:**
 - Whitelist model: only explicitly allowed resources

@@ -105,6 +105,40 @@ final class DbQuery implements ModuleInterface
                 ],
                 'required' => ['database', 'table'],
             ]),
+            new Tool('db_aggregate', 'Aggregate records grouped by fields (no raw SQL). Find duplicates: group_by + having_min_count=2', [
+                'type' => 'object',
+                'properties' => [
+                    'database' => ['type' => 'string', 'description' => 'Database connection name'],
+                    'table' => ['type' => 'string', 'description' => 'Table name'],
+                    'group_by' => [
+                        'type' => 'array',
+                        'items' => ['type' => 'string'],
+                        'description' => 'Fields to group by (must be in allowed_fields)',
+                    ],
+                    'aggregate' => [
+                        'type' => 'string',
+                        'description' => 'Aggregate function (only "count" for now)',
+                        'enum' => ['count'],
+                        'default' => 'count',
+                    ],
+                    'filters' => [
+                        'type' => 'object',
+                        'description' => 'Filter conditions: {field: {op: value}}. Same operators as db_query',
+                    ],
+                    'having_min_count' => [
+                        'type' => 'integer',
+                        'description' => 'Only return groups with count >= X (optional)',
+                    ],
+                    'order' => [
+                        'type' => 'string',
+                        'description' => 'Sort by group count',
+                        'enum' => ['count_desc', 'count_asc'],
+                        'default' => 'count_desc',
+                    ],
+                    'limit' => ['type' => 'integer', 'description' => 'Max groups to return (capped at table max_rows)'],
+                ],
+                'required' => ['database', 'table', 'group_by'],
+            ]),
             new Tool('db_stats', 'Get basic statistics for a numeric field (COUNT, MIN, MAX, AVG)', [
                 'type' => 'object',
                 'properties' => [
@@ -124,6 +158,7 @@ final class DbQuery implements ModuleInterface
             'db_describe' => $this->describe($arguments),
             'db_query' => $this->query($arguments),
             'db_count' => $this->count($arguments),
+            'db_aggregate' => $this->aggregate($arguments),
             'db_stats' => $this->stats($arguments),
             default => $this->error("Unknown tool: {$name}"),
         };
@@ -331,6 +366,70 @@ final class DbQuery implements ModuleInterface
         }
     }
 
+    private function aggregate(array $args): array
+    {
+        $requestedDb = $args['database'] ?? '';
+        $dbName = $this->resolveDbName($requestedDb);
+        if ($dbName === null) {
+            return $this->dbNotFoundError($requestedDb);
+        }
+        $tableName = $args['table'] ?? '';
+        $groupBy = $args['group_by'] ?? [];
+        $aggregateFn = $args['aggregate'] ?? 'count';
+        $filters = $args['filters'] ?? [];
+        $havingMinCount = $args['having_min_count'] ?? null;
+        $order = $args['order'] ?? 'count_desc';
+        $limit = (int) ($args['limit'] ?? 100);
+
+        $tableConfig = $this->connections[$dbName]['tables'][$tableName] ?? null;
+        if ($tableConfig === null) {
+            return $this->tableNotFoundError($dbName, $tableName);
+        }
+
+        $validation = $this->validateAggregateParams($groupBy, $aggregateFn, $filters, $havingMinCount, $order, $tableConfig);
+        if ($validation !== null) {
+            return $this->error($validation);
+        }
+
+        $havingMinCount = $havingMinCount !== null ? (int) $havingMinCount : null;
+
+        try {
+            $pdo = $this->getPdo($dbName);
+            $driver = $this->connections[$dbName]['driver'];
+            $params = [];
+
+            $sql = $this->buildAggregateSql(
+                $tableName,
+                $groupBy,
+                $filters,
+                $havingMinCount,
+                $order,
+                $limit,
+                $tableConfig['max_rows'],
+                $driver,
+                $params,
+            );
+
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+
+            $result = [
+                'database' => $dbName,
+                'table' => $tableName,
+                'group_by' => $groupBy,
+                'aggregate' => $aggregateFn,
+                'groups_returned' => count($rows),
+                'data' => $rows,
+            ];
+
+            return $this->ok(json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        } catch (\PDOException $e) {
+            fwrite(STDERR, "[ServerLens] DB error: {$e->getMessage()}\n");
+            return $this->error($this->formatDbError($e));
+        }
+    }
+
     private function stats(array $args): array
     {
         $requestedDb = $args['database'] ?? '';
@@ -497,6 +596,93 @@ final class DbQuery implements ModuleInterface
         }
 
         return null;
+    }
+
+    private function validateAggregateParams(
+        mixed $groupBy,
+        mixed $aggregateFn,
+        array $filters,
+        mixed $havingMinCount,
+        mixed $order,
+        array $tableConfig,
+    ): ?string {
+        if (!is_array($groupBy) || empty($groupBy)) {
+            return "group_by must be a non-empty array of fields";
+        }
+
+        $allowedFields = $this->resolveAllowedFields($tableConfig);
+        $isWildcard = $allowedFields === ['*'];
+        $deniedFields = $tableConfig['denied_fields'];
+
+        foreach ($groupBy as $field) {
+            if (!is_string($field) || !preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $field)) {
+                $printable = is_scalar($field) ? (string) $field : gettype($field);
+                return "Invalid group_by field: {$printable}";
+            }
+            if (!$isWildcard && !in_array($field, $allowedFields, true)) {
+                return "Group by field not allowed: {$field}";
+            }
+            if (in_array($field, $deniedFields, true)) {
+                return "Access denied to field: {$field}";
+            }
+        }
+
+        if ($aggregateFn !== 'count') {
+            $printable = is_scalar($aggregateFn) ? (string) $aggregateFn : gettype($aggregateFn);
+            return "Invalid aggregate function: {$printable}. Supported: count";
+        }
+
+        if ($havingMinCount !== null && (!is_numeric($havingMinCount) || (int) $havingMinCount < 1)) {
+            return "having_min_count must be a positive integer";
+        }
+
+        if (!in_array($order, ['count_desc', 'count_asc'], true)) {
+            $printable = is_scalar($order) ? (string) $order : gettype($order);
+            return "Invalid order: {$printable}. Allowed: [count_desc, count_asc]";
+        }
+
+        return $this->validateFilters($filters, $tableConfig);
+    }
+
+    /**
+     * @param string[] $groupBy
+     */
+    private function buildAggregateSql(
+        string $tableName,
+        array $groupBy,
+        array $filters,
+        ?int $havingMinCount,
+        string $order,
+        int $limit,
+        int $maxRows,
+        string $driver,
+        array &$params,
+    ): string {
+        $quotedTable = $this->quoteIdentifier($tableName, $driver);
+        $quotedGroupBy = array_map(fn($f) => $this->quoteIdentifier($f, $driver), $groupBy);
+        $groupByClause = implode(', ', $quotedGroupBy);
+
+        $sql = "SELECT {$groupByClause}, COUNT(*) AS count FROM {$quotedTable}";
+
+        $whereClause = $this->buildWhereClause($filters, $params, $driver);
+        if ($whereClause) {
+            $sql .= " WHERE {$whereClause}";
+        }
+
+        $sql .= " GROUP BY {$groupByClause}";
+
+        if ($havingMinCount !== null) {
+            $sql .= " HAVING COUNT(*) >= :_having";
+            $params[':_having'] = $havingMinCount;
+        }
+
+        $direction = $order === 'count_asc' ? 'ASC' : 'DESC';
+        $sql .= " ORDER BY COUNT(*) {$direction}";
+
+        $sql .= " LIMIT :_limit";
+        $params[':_limit'] = min(max($limit, 1), $maxRows);
+
+        return $sql;
     }
 
     private function buildWhereClause(array $filters, array &$params, string $driver = 'postgresql'): string

@@ -11,6 +11,7 @@ from serverlens.mcp.server import Server
 from serverlens.module.config_reader import ConfigReader
 from serverlens.module.config_suggest import ConfigSuggest
 from serverlens.module.db_query import DbQuery
+from serverlens.module.journal_reader import JournalReader
 from serverlens.module.log_reader import LogReader
 from serverlens.module.system_info import SystemInfo
 from serverlens.transport.base import TransportInterface
@@ -94,6 +95,10 @@ class Application:
         if self._config.is_system_enabled():
             self._mcp_server.register_module(SystemInfo(self._config))
             print("[ServerLens] Module loaded: SystemInfo", file=sys.stderr)
+
+        if self._config.is_journal_enabled() and self._config.get_allowed_journal_units():
+            self._mcp_server.register_module(JournalReader(self._config))
+            print("[ServerLens] Module loaded: JournalReader", file=sys.stderr)
 
     def _create_transport(self) -> None:
         if self._config.get_transport() == "sse":

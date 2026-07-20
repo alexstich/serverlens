@@ -32,6 +32,7 @@ ServerLens on the server operates exclusively in **read-only** mode:
 - **Configs** — read only, with automatic redaction of secrets (passwords, tokens, API keys are replaced with `[REDACTED]`).
 - **Database** — only `SELECT` queries through a structured API. No raw SQL — the model cannot execute `UPDATE`, `DELETE`, `DROP`, or any DDL. Queries are parameterized and limited to whitelisted tables and fields.
 - **System** — read-only metrics: CPU, RAM, disk, service status, process list. No ability to start, stop, or restart anything.
+- **Systemd journal** — `journalctl` tail and search for whitelisted units only. Search queries are matched by the agent itself and never passed to the shell.
 
 ### MCP protocol — the model is sandboxed
 

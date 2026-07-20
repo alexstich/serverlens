@@ -124,6 +124,14 @@ class Config:
     def get_allowed_docker_stacks(self) -> list[str]:
         return self.get("system.allowed_docker_stacks", []) or []
 
+    # --- Journal ---
+
+    def is_journal_enabled(self) -> bool:
+        return bool(self.get("journal.enabled", False))
+
+    def get_allowed_journal_units(self) -> list[str]:
+        return self.get("journal.allowed_units", []) or []
+
     def _validate(self) -> None:
         host = self.get_server_host()
         if host not in ("127.0.0.1", "localhost", "::1"):

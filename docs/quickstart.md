@@ -103,6 +103,7 @@ Beyond that — it depends on your services. The installer detects groups and pr
 | PHP-FPM | `adm` (after fix) | `root` | `sudo usermod -aG adm deploy` |
 | PostgreSQL | `postgres` | `postgres` | `sudo usermod -aG postgres deploy` |
 | RabbitMQ | `rabbitmq` | `rabbitmq` | `sudo usermod -aG rabbitmq deploy` |
+| systemd journal (JournalReader) | `systemd-journal` | `systemd-journal` | `sudo usermod -aG systemd-journal deploy` |
 
 > **What is `adm`?** A standard Ubuntu/Debian system group for reading logs. Created with the OS. Most files under `/var/log/` are `root:adm`. Check with: `getent group adm`
 
