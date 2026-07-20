@@ -10,6 +10,7 @@ use ServerLens\Auth\TokenAuth;
 use ServerLens\Mcp\Server;
 use ServerLens\Module\ConfigReader;
 use ServerLens\Module\DbQuery;
+use ServerLens\Module\JournalReader;
 use ServerLens\Module\LogReader;
 use ServerLens\Module\SystemInfo;
 use ServerLens\Transport\SseTransport;
@@ -81,6 +82,11 @@ final class Application
         if ($this->config->isSystemEnabled()) {
             $this->mcpServer->registerModule(new SystemInfo($this->config));
             fwrite(STDERR, "[ServerLens] Module loaded: SystemInfo\n");
+        }
+
+        if ($this->config->isJournalEnabled() && !empty($this->config->getAllowedJournalUnits())) {
+            $this->mcpServer->registerModule(new JournalReader($this->config));
+            fwrite(STDERR, "[ServerLens] Module loaded: JournalReader\n");
         }
     }
 

@@ -140,3 +140,10 @@ system:
     - "rabbitmq-server"
   allowed_docker_stacks:
     - "app"
+
+journal:
+  enabled: true
+  allowed_units:              # systemd unit whitelist for journalctl (exact match)
+    - "nginx"
+    - "postgresql"
+    - "rabbitmq-server"

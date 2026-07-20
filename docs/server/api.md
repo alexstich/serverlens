@@ -326,6 +326,54 @@ Row count matching filters.
 
 ---
 
+### db_aggregate
+
+Aggregate rows grouped by fields (GROUP BY without raw SQL). The main use case is finding duplicates: `group_by` + `having_min_count: 2`.
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|----------|-----|:---:|:---:|----------|
+| `database` | string | yes | — | Database connection name |
+| `table` | string | yes | — | Table name |
+| `group_by` | string[] | yes | — | Fields to group by (must be in `allowed_fields`) |
+| `aggregate` | string | no | `count` | Aggregate function (only `count` for now) |
+| `filters` | object | no | — | Filter conditions (same operators as `db_query`) |
+| `having_min_count` | integer | no | — | Only return groups with `count >= X` |
+| `order` | string | no | `count_desc` | Sort by group count: `count_desc` or `count_asc` |
+| `limit` | integer | no | 100 | Max groups (capped at table `max_rows`) |
+
+**Example (find duplicate gis_guid):**
+```json
+{
+  "database": "app_prod",
+  "table": "houses",
+  "group_by": ["gis_guid"],
+  "having_min_count": 2,
+  "order": "count_desc",
+  "limit": 50
+}
+```
+
+**Example response:**
+```json
+{
+  "database": "app_prod",
+  "table": "houses",
+  "group_by": ["gis_guid"],
+  "aggregate": "count",
+  "groups_returned": 2,
+  "data": [
+    {"gis_guid": "a1b2-c3d4", "count": 3},
+    {"gis_guid": "e5f6-g7h8", "count": 2}
+  ]
+}
+```
+
+> The generated SQL is built only from whitelisted identifiers; filter values are always bound as parameters.
+
+---
+
 ### db_stats
 
 Basic statistics on a numeric field: COUNT, MIN, MAX, AVG.
@@ -459,3 +507,65 @@ Process list sorted by CPU or memory (like htop/top).
   ]
 }
 ```
+
+---
+
+## Systemd journal (JournalReader)
+
+Read-only access to the systemd journal via `journalctl`. Units must be explicitly whitelisted in `journal.allowed_units` (exact match — `nginx` does not allow `nginx-debug`). Enabled by `journal.enabled: true` in the config.
+
+### journal_units
+
+Returns the whitelist of units available for journal reading.
+
+**Parameters:** none
+
+**Example response:**
+```json
+{
+  "allowed_units": ["nginx", "postgresql", "rabbitmq-server"],
+  "hint": "Use these unit names in journal_tail/journal_search"
+}
+```
+
+---
+
+### journal_tail
+
+Returns the last N journal lines for a unit (`journalctl -u <unit> -n <N> --no-pager -o short-iso`).
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|----------|-----|:---:|:---:|----------|
+| `unit` | string | yes | — | Unit name from the whitelist |
+| `lines` | integer | no | 100 | Number of lines (max 500) |
+
+**Example:**
+```json
+{"unit": "nginx", "lines": 50}
+```
+
+---
+
+### journal_search
+
+Search a unit's journal by substring or regular expression, optionally within a time range. Matching is performed by ServerLens itself (the query string is never passed to the shell); the shell command only contains the whitelisted unit and escaped time specs.
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|----------|-----|:---:|:---:|----------|
+| `unit` | string | yes | — | Unit name from the whitelist |
+| `query` | string | yes | — | Search query |
+| `regex` | boolean | no | false | Use regex |
+| `since` | string | no | — | journalctl time spec: `2026-07-18`, `2026-07-18 10:00:00`, `3 days ago`, `yesterday` |
+| `until` | string | no | — | journalctl time spec |
+| `lines` | integer | no | 100 | Max matching lines (max 1000) |
+
+**Example:**
+```json
+{"unit": "nginx", "query": "upstream timed out", "since": "3 days ago", "lines": 50}
+```
+
+> Search scans at most the last 50 000 journal lines of the selected range and has a 5 second timeout.

@@ -171,6 +171,17 @@ final class Config
         return $this->get('system.allowed_docker_stacks', []);
     }
 
+    public function isJournalEnabled(): bool
+    {
+        return (bool) $this->get('journal.enabled', false);
+    }
+
+    /** @return string[] */
+    public function getAllowedJournalUnits(): array
+    {
+        return $this->get('journal.allowed_units', []);
+    }
+
     private function validate(): void
     {
         $host = $this->getServerHost();

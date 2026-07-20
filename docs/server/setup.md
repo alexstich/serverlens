@@ -284,6 +284,31 @@ system:
     - "myapp"
 ```
 
+### journal — Systemd journal (journalctl)
+
+```yaml
+journal:
+  enabled: true
+  allowed_units:                # unit whitelist for journalctl (exact match)
+    - "nginx"
+    - "postgresql"
+    - "rabbitmq-server"
+```
+
+Provides `journal_units`, `journal_tail`, `journal_search` (see [API Reference](api.md#systemd-journal-journalreader)).
+
+**Security:**
+- Whitelist-first: with `enabled: false` or an empty `allowed_units` the module is not loaded at all
+- Unit names are compared **exactly** (`nginx` does not allow `nginx-debug`) and shell arguments are escaped
+- Search queries are matched by ServerLens itself — user input is never passed to `grep` or other shell commands
+- Read-only: only `journalctl` with `--no-pager` output, no `--vacuum-*`/write options
+
+**Permissions:** reading other units' journals requires membership in the `systemd-journal` group:
+
+```bash
+sudo usermod -aG systemd-journal deploy
+```
+
 ---
 
 ## Running
