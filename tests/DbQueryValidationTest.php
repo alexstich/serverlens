@@ -127,6 +127,22 @@ final class DbQueryValidationTest extends TestCase
 
     public function testDisallowedOrderByRejected(): void
     {
+        // A readable column is orderable, so the rejection has to be about a
+        // column the model may not read at all.
+        $result = $this->db->handleToolCall('db_query', [
+            'database' => 'test_db',
+            'table' => 'users',
+            'order_by' => ['password_hash'],
+        ]);
+
+        $this->assertTrue($result['isError']);
+        $this->assertStringContainsString('not allowed', $result['content'][0]['text']);
+    }
+
+    public function testReadableFieldIsOrderableWithoutBeingListed(): void
+    {
+        // 'email' is in allowed_fields but not in allowed_order_by: it must pass
+        // validation and fail later, on the (absent) database connection.
         $result = $this->db->handleToolCall('db_query', [
             'database' => 'test_db',
             'table' => 'users',
@@ -134,7 +150,19 @@ final class DbQueryValidationTest extends TestCase
         ]);
 
         $this->assertTrue($result['isError']);
-        $this->assertStringContainsString('not allowed', $result['content'][0]['text']);
+        $this->assertStringNotContainsString('not allowed', $result['content'][0]['text']);
+    }
+
+    public function testReadableFieldIsFilterableWithoutBeingListed(): void
+    {
+        $result = $this->db->handleToolCall('db_query', [
+            'database' => 'test_db',
+            'table' => 'users',
+            'filters' => ['created_at' => ['contains' => 'x']],
+        ]);
+
+        $this->assertTrue($result['isError']);
+        $this->assertStringNotContainsString('not allowed', $result['content'][0]['text']);
     }
 
     private function makeConfig(): Config

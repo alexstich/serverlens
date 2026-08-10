@@ -42,6 +42,8 @@ The LLM model does not have direct access to SSH, the filesystem, or the databas
 
 Nothing is accessible by default. Every log file, config, database table, and field must be explicitly listed in the server config (`/etc/serverlens/config.yaml`). If it's not in the whitelist, it doesn't exist for the model.
 
+Within a table, `allowed_fields` is the boundary that matters: a column listed there may be selected, filtered on, grouped by, and ordered by. `allowed_filters` / `allowed_order_by` only *extend* that set — use them for a column you want filterable but not visible. `denied_fields` overrides everything. Read-only queries are also capped by a 30-second statement timeout, so a filter on an unindexed column of a huge table gets cut off instead of blocking the server.
+
 ### Summary
 
 | Layer | Protection |

@@ -9,6 +9,20 @@ use ServerLens\Mcp\Tool;
 
 final class DbQuery implements ModuleInterface
 {
+    private const VALID_OPS = [
+        'eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'in', 'not_in',
+        'like', 'contains', 'between', 'is_null', 'array_contains',
+    ];
+
+    private const VALID_AGG_FNS = ['count', 'min', 'max', 'avg', 'sum'];
+
+    /**
+     * Read-only queries must never hold a connection hostage: a filter on an
+     * unindexed column of a large table gets cut off instead of blocking the
+     * whole MCP server.
+     */
+    private const STATEMENT_TIMEOUT_MS = 30000;
+
     /** @var array<string, array{driver: string, dsn: string, user: string, password: string, tables: array}> */
     private array $connections = [];
 
@@ -81,7 +95,7 @@ final class DbQuery implements ModuleInterface
                     ],
                     'filters' => [
                         'type' => 'object',
-                        'description' => 'Filter conditions: {field: {op: value}}. Ops: eq, neq, gt, gte, lt, lte, in, like, is_null',
+                        'description' => 'Filter conditions: {field: {op: value}}. Ops: eq, neq, gt, gte, lt, lte, in, not_in, like, contains, between, is_null, array_contains',
                     ],
                     'order_by' => [
                         'type' => 'array',
@@ -90,6 +104,12 @@ final class DbQuery implements ModuleInterface
                     ],
                     'limit' => ['type' => 'integer', 'description' => 'Max rows to return'],
                     'offset' => ['type' => 'integer', 'description' => 'Offset for pagination', 'default' => 0],
+                    'format' => [
+                        'type' => 'string',
+                        'enum' => ['json', 'tsv'],
+                        'description' => 'Output format. tsv is ~4x more compact for wide result sets.',
+                        'default' => 'json',
+                    ],
                 ],
                 'required' => ['database', 'table'],
             ]),
@@ -113,13 +133,18 @@ final class DbQuery implements ModuleInterface
                     'group_by' => [
                         'type' => 'array',
                         'items' => ['type' => 'string'],
-                        'description' => 'Fields to group by (must be in allowed_fields)',
+                        'description' => "Fields to group by (must be in allowed_fields). May be empty when 'aggregates' is given — then the whole table is one group.",
                     ],
                     'aggregate' => [
                         'type' => 'string',
-                        'description' => 'Aggregate function (only "count" for now)',
+                        'description' => 'Single aggregate function; ignored when "aggregates" is given',
                         'enum' => ['count'],
                         'default' => 'count',
+                    ],
+                    'aggregates' => [
+                        'type' => 'array',
+                        'items' => ['type' => 'object'],
+                        'description' => 'Several aggregates at once: [{fn: count|min|max|avg|sum, field?, alias?}]. count without a field means COUNT(*).',
                     ],
                     'filters' => [
                         'type' => 'object',
@@ -135,9 +160,20 @@ final class DbQuery implements ModuleInterface
                         'enum' => ['count_desc', 'count_asc'],
                         'default' => 'count_desc',
                     ],
+                    'order_by' => [
+                        'type' => 'array',
+                        'items' => ['type' => 'string'],
+                        'description' => "Sort by group field or aggregate alias, prefix with - for DESC. Takes precedence over 'order'.",
+                    ],
                     'limit' => ['type' => 'integer', 'description' => 'Max groups to return (capped at table max_rows)'],
+                    'format' => [
+                        'type' => 'string',
+                        'enum' => ['json', 'tsv'],
+                        'description' => 'tsv is ~4x more compact',
+                        'default' => 'json',
+                    ],
                 ],
-                'required' => ['database', 'table', 'group_by'],
+                'required' => ['database', 'table'],
             ]),
             new Tool('db_stats', 'Get basic statistics for a numeric field (COUNT, MIN, MAX, AVG)', [
                 'type' => 'object',
@@ -226,8 +262,12 @@ final class DbQuery implements ModuleInterface
             'allowed_fields' => $tableConfig['allowed_fields'],
             'denied_fields' => $tableConfig['denied_fields'],
             'max_rows' => $tableConfig['max_rows'],
-            'allowed_filters' => $tableConfig['allowed_filters'],
-            'allowed_order_by' => $tableConfig['allowed_order_by'],
+            // Effective sets, not the raw config keys: a readable column is
+            // filterable and orderable by default, and config only extends that.
+            'filterable_fields' => $this->resolveFilterable($tableConfig),
+            'orderable_fields' => $this->resolveOrderable($tableConfig),
+            'allowed_filters_config' => $tableConfig['allowed_filters'],
+            'allowed_order_by_config' => $tableConfig['allowed_order_by'],
         ];
 
         return $this->ok(json_encode($info, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
@@ -257,7 +297,8 @@ final class DbQuery implements ModuleInterface
             $fields = $allowedFields;
         }
 
-        $validation = $this->validateQueryParams($fields, $filters, $orderBy, $tableConfig);
+        $driver = $this->connections[$dbName]['driver'];
+        $validation = $this->validateQueryParams($fields, $filters, $orderBy, $tableConfig, $driver);
         if ($validation !== null) {
             return $this->error($validation);
         }
@@ -267,7 +308,6 @@ final class DbQuery implements ModuleInterface
 
         try {
             $pdo = $this->getPdo($dbName);
-            $driver = $this->connections[$dbName]['driver'];
 
             $quotedFields = array_map(fn($f) => $this->quoteIdentifier($f, $driver), $fields);
             $quotedTable = $this->quoteIdentifier($tableName, $driver);
@@ -300,6 +340,12 @@ final class DbQuery implements ModuleInterface
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
             $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+
+            if (self::wantsTsv($args)) {
+                $header = "# database={$dbName} table={$tableName} rows=" . count($rows)
+                    . " offset={$offset} limit={$limit}";
+                return $this->ok(self::toTsv($rows, $fields, $header));
+            }
 
             $result = [
                 'database' => $dbName,
@@ -376,9 +422,11 @@ final class DbQuery implements ModuleInterface
         $tableName = $args['table'] ?? '';
         $groupBy = $args['group_by'] ?? [];
         $aggregateFn = $args['aggregate'] ?? 'count';
+        $aggregates = $args['aggregates'] ?? [];
         $filters = $args['filters'] ?? [];
         $havingMinCount = $args['having_min_count'] ?? null;
         $order = $args['order'] ?? 'count_desc';
+        $orderBy = $args['order_by'] ?? [];
         $limit = (int) ($args['limit'] ?? 100);
 
         $tableConfig = $this->connections[$dbName]['tables'][$tableName] ?? null;
@@ -386,16 +434,27 @@ final class DbQuery implements ModuleInterface
             return $this->tableNotFoundError($dbName, $tableName);
         }
 
-        $validation = $this->validateAggregateParams($groupBy, $aggregateFn, $filters, $havingMinCount, $order, $tableConfig);
+        $driver = $this->connections[$dbName]['driver'];
+        $validation = $this->validateAggregateParams(
+            $groupBy,
+            $aggregateFn,
+            $filters,
+            $havingMinCount,
+            $order,
+            $tableConfig,
+            $aggregates,
+            $orderBy,
+            $driver,
+        );
         if ($validation !== null) {
             return $this->error($validation);
         }
 
         $havingMinCount = $havingMinCount !== null ? (int) $havingMinCount : null;
+        [$selectExtra, $aliases] = $this->buildAggregateSelects($aggregates, $driver);
 
         try {
             $pdo = $this->getPdo($dbName);
-            $driver = $this->connections[$dbName]['driver'];
             $params = [];
 
             $sql = $this->buildAggregateSql(
@@ -408,17 +467,25 @@ final class DbQuery implements ModuleInterface
                 $tableConfig['max_rows'],
                 $driver,
                 $params,
+                $selectExtra,
+                $orderBy,
             );
 
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
             $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
 
+            if (self::wantsTsv($args)) {
+                $columns = array_merge($groupBy, $aliases ?: ['count']);
+                $header = "# database={$dbName} table={$tableName} groups=" . count($rows);
+                return $this->ok(self::toTsv($rows, $columns, $header));
+            }
+
             $result = [
                 'database' => $dbName,
                 'table' => $tableName,
                 'group_by' => $groupBy,
-                'aggregate' => $aggregateFn,
+                'aggregate' => $aggregates ?: $aggregateFn,
                 'groups_returned' => count($rows),
                 'data' => $rows,
             ];
@@ -528,7 +595,49 @@ final class DbQuery implements ModuleInterface
         return array_values(array_diff($allowed, $denied));
     }
 
-    private function validateQueryParams(array $fields, array $filters, array $orderBy, array $tableConfig): ?string
+    /**
+     * Fields a filter may reference.
+     *
+     * A readable column is a filterable column: if the model may already SELECT
+     * the value, filtering by it discloses nothing new, and forcing operators to
+     * maintain a second parallel whitelist only means diagnostics stall on a
+     * config edit. allowed_filters therefore EXTENDS the set — it is for columns
+     * you want filterable but not visible — and denied_fields still wins.
+     *
+     * @return string[]
+     */
+    private function resolveFilterable(array $tableConfig): array
+    {
+        $allowed = $this->resolveAllowedFields($tableConfig);
+        if ($allowed === ['*']) {
+            return ['*'];
+        }
+
+        $denied = $tableConfig['denied_fields'];
+        $extra = array_diff($tableConfig['allowed_filters'], $allowed, $denied);
+
+        return array_values(array_merge($allowed, $extra));
+    }
+
+    /**
+     * Fields ORDER BY may reference — same reasoning as resolveFilterable().
+     *
+     * @return string[]
+     */
+    private function resolveOrderable(array $tableConfig): array
+    {
+        $allowed = $this->resolveAllowedFields($tableConfig);
+        if ($allowed === ['*']) {
+            return ['*'];
+        }
+
+        $denied = $tableConfig['denied_fields'];
+        $extra = array_diff($tableConfig['allowed_order_by'], $allowed, $denied);
+
+        return array_values(array_merge($allowed, $extra));
+    }
+
+    private function validateQueryParams(array $fields, array $filters, array $orderBy, array $tableConfig, string $driver = 'postgresql'): ?string
     {
         $allowedFields = $this->resolveAllowedFields($tableConfig);
         $isWildcard = $allowedFields === ['*'];
@@ -548,30 +657,32 @@ final class DbQuery implements ModuleInterface
             }
         }
 
-        $validationError = $this->validateFilters($filters, $tableConfig);
+        $validationError = $this->validateFilters($filters, $tableConfig, $driver);
         if ($validationError !== null) {
             return $validationError;
         }
 
-        $allowedOrderBy = $tableConfig['allowed_order_by'];
-        foreach ($orderBy as $ob) {
-            $field = ltrim($ob, '-');
-            if (!empty($allowedOrderBy) && !in_array($field, $allowedOrderBy, true)) {
-                $allowed = implode(', ', $allowedOrderBy);
-                return "Order by field not allowed: {$field}. Allowed: [{$allowed}]";
+        $orderable = $this->resolveOrderable($tableConfig);
+        if ($orderable !== ['*']) {
+            foreach ($orderBy as $ob) {
+                $field = ltrim($ob, '-');
+                if (!in_array($field, $orderable, true)) {
+                    $allowed = implode(', ', $orderable);
+                    return "Order by field not allowed: {$field}. Allowed: [{$allowed}]";
+                }
             }
         }
 
         return null;
     }
 
-    private function validateFilters(array $filters, array $tableConfig): ?string
+    private function validateFilters(array $filters, array $tableConfig, string $driver = 'postgresql'): ?string
     {
-        $allowedFilters = $tableConfig['allowed_filters'];
+        $filterable = $this->resolveFilterable($tableConfig);
 
         foreach ($filters as $field => $conditions) {
-            if (!empty($allowedFilters) && !in_array($field, $allowedFilters, true)) {
-                $allowed = implode(', ', $allowedFilters);
+            if ($filterable !== ['*'] && !in_array($field, $filterable, true)) {
+                $allowed = implode(', ', $filterable);
                 return "Filter on field not allowed: {$field}. Allowed: [{$allowed}]";
             }
 
@@ -579,17 +690,40 @@ final class DbQuery implements ModuleInterface
                 return "Invalid filter format for field: {$field}";
             }
 
-            $validOps = ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'in', 'like', 'is_null'];
             foreach ($conditions as $op => $value) {
-                if (!in_array($op, $validOps, true)) {
-                    return "Invalid filter operator: {$op}";
+                if (!in_array($op, self::VALID_OPS, true)) {
+                    $valid = implode(', ', self::VALID_OPS);
+                    return "Invalid filter operator: {$op}. Valid: [{$valid}]";
                 }
 
-                if ($op === 'in' && is_array($value) && count($value) > 50) {
-                    return "IN operator limited to 50 values";
+                if ($op === 'in' || $op === 'not_in') {
+                    if (!is_array($value)) {
+                        return "Operator '{$op}' expects a list of values";
+                    }
+                    if (count($value) > 50) {
+                        return "Operator '{$op}' is limited to 50 values";
+                    }
+                    continue;
                 }
 
-                if ($op !== 'in' && $op !== 'is_null' && !is_scalar($value)) {
+                if ($op === 'between') {
+                    if (!is_array($value) || count($value) !== 2) {
+                        return "Operator 'between' expects a list of exactly two values";
+                    }
+                    continue;
+                }
+
+                if ($op === 'array_contains') {
+                    if ($driver === 'mysql') {
+                        return "Operator 'array_contains' is PostgreSQL-only";
+                    }
+                    if (!is_scalar($value)) {
+                        return "Filter values must be scalar";
+                    }
+                    continue;
+                }
+
+                if ($op !== 'is_null' && !is_scalar($value)) {
                     return "Filter values must be scalar";
                 }
             }
@@ -605,8 +739,21 @@ final class DbQuery implements ModuleInterface
         mixed $havingMinCount,
         mixed $order,
         array $tableConfig,
+        mixed $aggregates = null,
+        mixed $orderBy = null,
+        string $driver = 'postgresql',
     ): ?string {
-        if (!is_array($groupBy) || empty($groupBy)) {
+        $aggregates = $aggregates ?: [];
+        $orderBy = $orderBy ?: [];
+
+        if (!is_array($aggregates)) {
+            return "aggregates must be an array of {fn, field?, alias?} objects";
+        }
+
+        // Without an explicit aggregates spec the tool computes COUNT(*) per
+        // group, and a group-less COUNT(*) is just db_count — so keep requiring
+        // group_by in that case.
+        if (!is_array($groupBy) || (empty($groupBy) && empty($aggregates))) {
             return "group_by must be a non-empty array of fields";
         }
 
@@ -627,21 +774,120 @@ final class DbQuery implements ModuleInterface
             }
         }
 
-        if ($aggregateFn !== 'count') {
+        if (empty($aggregates) && $aggregateFn !== 'count') {
             $printable = is_scalar($aggregateFn) ? (string) $aggregateFn : gettype($aggregateFn);
             return "Invalid aggregate function: {$printable}. Supported: count";
+        }
+
+        $aliases = $groupBy;
+        foreach ($aggregates as $agg) {
+            if (!is_array($agg)) {
+                return "Each aggregate must be an object: {fn, field?, alias?}";
+            }
+
+            $fn = strtolower((string) ($agg['fn'] ?? ''));
+            if (!in_array($fn, self::VALID_AGG_FNS, true)) {
+                $valid = implode(', ', self::VALID_AGG_FNS);
+                return "Invalid aggregate function: {$fn}. Valid: [{$valid}]";
+            }
+
+            $field = $agg['field'] ?? null;
+            if ($field === null) {
+                if ($fn !== 'count') {
+                    return "Aggregate '{$fn}' requires a field";
+                }
+                $defaultAlias = 'count';
+            } else {
+                if (!is_string($field) || !preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $field)) {
+                    $printable = is_scalar($field) ? (string) $field : gettype($field);
+                    return "Invalid aggregate field: {$printable}";
+                }
+                if (!$isWildcard && !in_array($field, $allowedFields, true)) {
+                    return "Aggregate field not allowed: {$field}";
+                }
+                if (in_array($field, $deniedFields, true)) {
+                    return "Access denied to field: {$field}";
+                }
+                $defaultAlias = "{$fn}_{$field}";
+            }
+
+            $alias = (string) ($agg['alias'] ?? '');
+            if ($alias === '') {
+                $alias = $defaultAlias;
+            }
+            if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $alias)) {
+                return "Invalid aggregate alias: {$alias}";
+            }
+            if (in_array($alias, $aliases, true)) {
+                return "Duplicate output name: {$alias}";
+            }
+            $aliases[] = $alias;
+        }
+
+        if (empty($aggregates)) {
+            $aliases[] = 'count';
+        }
+
+        if (!is_array($orderBy)) {
+            return "order_by must be an array";
+        }
+        foreach ($orderBy as $ob) {
+            if (!is_string($ob) || !in_array(ltrim($ob, '-'), $aliases, true)) {
+                $printable = is_scalar($ob) ? (string) $ob : gettype($ob);
+                $available = implode(', ', $aliases);
+                return "Order by must reference a group field or aggregate alias: {$printable}. Available: [{$available}]";
+            }
         }
 
         if ($havingMinCount !== null && (!is_numeric($havingMinCount) || (int) $havingMinCount < 1)) {
             return "having_min_count must be a positive integer";
         }
 
-        if (!in_array($order, ['count_desc', 'count_asc'], true)) {
+        if (empty($orderBy) && !in_array($order, ['count_desc', 'count_asc'], true)) {
             $printable = is_scalar($order) ? (string) $order : gettype($order);
             return "Invalid order: {$printable}. Allowed: [count_desc, count_asc]";
         }
 
-        return $this->validateFilters($filters, $tableConfig);
+        return $this->validateFilters($filters, $tableConfig, $driver);
+    }
+
+    /**
+     * Turn the aggregates spec into SELECT expressions plus their aliases.
+     * Assumes validateAggregateParams() already accepted the spec.
+     *
+     * @return array{0: string[], 1: string[]}
+     */
+    private function buildAggregateSelects(array $aggregates, string $driver): array
+    {
+        $selectExtra = [];
+        $aliases = [];
+
+        foreach ($aggregates as $agg) {
+            $fn = strtolower((string) ($agg['fn'] ?? 'count'));
+            $field = $agg['field'] ?? null;
+
+            if ($field === null) {
+                $expr = 'COUNT(*)';
+                $defaultAlias = 'count';
+            } else {
+                $quoted = $this->quoteIdentifier((string) $field, $driver);
+                // Postgres refuses AVG on integer-like columns without a cast.
+                $expr = ($fn === 'avg' && $driver !== 'mysql')
+                    ? "AVG({$quoted}::numeric)"
+                    : strtoupper($fn) . "({$quoted})";
+                $defaultAlias = "{$fn}_{$field}";
+            }
+
+            $alias = (string) ($agg['alias'] ?? '');
+            if ($alias === '') {
+                $alias = $defaultAlias;
+            }
+
+            $aliases[] = $alias;
+            $selectExtra[] = $expr . ' AS ' . $this->quoteIdentifier($alias, $driver);
+        }
+
+        return [$selectExtra, $aliases];
     }
 
     /**
@@ -657,27 +903,44 @@ final class DbQuery implements ModuleInterface
         int $maxRows,
         string $driver,
         array &$params,
+        ?array $selectExtra = null,
+        ?array $orderBy = null,
     ): string {
         $quotedTable = $this->quoteIdentifier($tableName, $driver);
         $quotedGroupBy = array_map(fn($f) => $this->quoteIdentifier($f, $driver), $groupBy);
         $groupByClause = implode(', ', $quotedGroupBy);
 
-        $sql = "SELECT {$groupByClause}, COUNT(*) AS count FROM {$quotedTable}";
+        $selectParts = $groupByClause !== '' ? [$groupByClause] : [];
+        foreach ($selectExtra ?: ['COUNT(*) AS count'] as $part) {
+            $selectParts[] = $part;
+        }
+        $sql = 'SELECT ' . implode(', ', $selectParts) . " FROM {$quotedTable}";
 
         $whereClause = $this->buildWhereClause($filters, $params, $driver);
         if ($whereClause) {
             $sql .= " WHERE {$whereClause}";
         }
 
-        $sql .= " GROUP BY {$groupByClause}";
+        if ($groupByClause !== '') {
+            $sql .= " GROUP BY {$groupByClause}";
+        }
 
         if ($havingMinCount !== null) {
             $sql .= " HAVING COUNT(*) >= :_having";
             $params[':_having'] = $havingMinCount;
         }
 
-        $direction = $order === 'count_asc' ? 'ASC' : 'DESC';
-        $sql .= " ORDER BY COUNT(*) {$direction}";
+        if (!empty($orderBy)) {
+            $orderParts = [];
+            foreach ($orderBy as $ob) {
+                $dir = str_starts_with($ob, '-') ? 'DESC' : 'ASC';
+                $orderParts[] = $this->quoteIdentifier(ltrim($ob, '-'), $driver) . " {$dir}";
+            }
+            $sql .= ' ORDER BY ' . implode(', ', $orderParts);
+        } elseif (empty($selectExtra)) {
+            $direction = $order === 'count_asc' ? 'ASC' : 'DESC';
+            $sql .= " ORDER BY COUNT(*) {$direction}";
+        }
 
         $sql .= " LIMIT :_limit";
         $params[':_limit'] = min(max($limit, 1), $maxRows);
@@ -728,6 +991,7 @@ final class DbQuery implements ModuleInterface
                         $paramIdx++;
                         break;
                     case 'in':
+                    case 'not_in':
                         if (!is_array($value) || empty($value)) {
                             break;
                         }
@@ -738,10 +1002,32 @@ final class DbQuery implements ModuleInterface
                             $params[$pName] = $v;
                             $paramIdx++;
                         }
-                        $conditions[] = "{$quotedField} IN (" . implode(', ', $inParams) . ")";
+                        $keyword = $op === 'in' ? 'IN' : 'NOT IN';
+                        $conditions[] = "{$quotedField} {$keyword} (" . implode(', ', $inParams) . ")";
                         break;
                     case 'like':
                         $conditions[] = "{$quotedField} LIKE {$paramName}";
+                        $params[$paramName] = $value;
+                        $paramIdx++;
+                        break;
+                    case 'contains':
+                        $conditions[] = "{$quotedField} LIKE {$paramName} ESCAPE '\\'";
+                        $params[$paramName] = '%' . self::escapeLike((string) $value) . '%';
+                        $paramIdx++;
+                        break;
+                    case 'between':
+                        $lowName = ":p{$paramIdx}";
+                        $paramIdx++;
+                        $highName = ":p{$paramIdx}";
+                        $paramIdx++;
+                        $conditions[] = "{$quotedField} BETWEEN {$lowName} AND {$highName}";
+                        $params[$lowName] = $value[0];
+                        $params[$highName] = $value[1];
+                        break;
+                    case 'array_contains':
+                        // PostgreSQL array column: value = ANY(col). Rejected for
+                        // MySQL during validation.
+                        $conditions[] = "{$paramName} = ANY({$quotedField})";
                         $params[$paramName] = $value;
                         $paramIdx++;
                         break;
@@ -781,13 +1067,56 @@ final class DbQuery implements ModuleInterface
 
         if ($conn['driver'] === 'mysql') {
             $pdo->exec("SET SESSION TRANSACTION READ ONLY");
+            $pdo->exec('SET SESSION MAX_EXECUTION_TIME = ' . self::STATEMENT_TIMEOUT_MS);
         } else {
             $pdo->exec("SET default_transaction_read_only = on");
+            $pdo->exec('SET statement_timeout = ' . self::STATEMENT_TIMEOUT_MS);
         }
 
         $this->pdoCache[$dbName] = $pdo;
 
         return $pdo;
+    }
+
+    /** Neutralise LIKE wildcards so 'contains' means a literal substring. */
+    private static function escapeLike(string $value): string
+    {
+        return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $value);
+    }
+
+    private static function wantsTsv(array $args): bool
+    {
+        return strtolower((string) ($args['format'] ?? 'json')) === 'tsv';
+    }
+
+    /**
+     * Compact output: one header line, one line per row, tabs between values.
+     *
+     * Roughly four times smaller than pretty-printed JSON on wide result sets,
+     * which is what decides whether a result fits in the caller's context.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     * @param string[] $columns
+     */
+    private static function toTsv(array $rows, array $columns, string $header): string
+    {
+        if (!empty($rows) && $columns === ['*']) {
+            $columns = array_keys($rows[0]);
+        }
+
+        $lines = [$header, implode("\t", $columns)];
+        foreach ($rows as $row) {
+            $cells = [];
+            foreach ($columns as $column) {
+                $value = $row[$column] ?? null;
+                $cells[] = $value === null
+                    ? ''
+                    : str_replace(["\t", "\n", "\r"], ' ', (string) $value);
+            }
+            $lines[] = implode("\t", $cells);
+        }
+
+        return implode("\n", $lines);
     }
 
     private function quoteIdentifier(string $name, string $driver = 'postgresql'): string
@@ -827,6 +1156,13 @@ final class DbQuery implements ModuleInterface
         }
         if (str_contains($msg, 'permission denied') || str_contains($msg, 'command denied')) {
             return "Database permission denied (check GRANT SELECT)";
+        }
+        if (str_contains($msg, 'statement timeout') || str_contains($msg, 'maximum statement execution time')) {
+            $seconds = intdiv(self::STATEMENT_TIMEOUT_MS, 1000);
+            return "Query exceeded the {$seconds}s read-only timeout — narrow the filters or group over fewer rows";
+        }
+        if (str_contains($msg, 'must appear in the GROUP BY') || str_contains($msg, 'not in GROUP BY')) {
+            return "Aggregate query is invalid: every selected field must be grouped or aggregated";
         }
         return "Database query failed";
     }
