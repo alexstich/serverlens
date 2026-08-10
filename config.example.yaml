@@ -102,12 +102,16 @@ databases:
       user: "serverlens_readonly"
       password_env: "SL_DB_APP_PASS"
       tables:
+        # allowed_fields is the real boundary: those columns can be selected,
+        # filtered, grouped and ordered by. allowed_filters / allowed_order_by
+        # only ADD columns on top (filterable but not visible), and
+        # denied_fields always wins.
         - name: "users"
           allowed_fields: ["id", "email", "created_at", "is_active"]
           denied_fields: ["password_hash", "api_key", "reset_token"]
           max_rows: 500
-          allowed_filters: ["id", "email", "is_active", "created_at"]
-          allowed_order_by: ["id", "created_at"]
+          allowed_filters: ["tenant_id"]   # filterable, never returned
+          allowed_order_by: []
 
         - name: "api_requests"
           allowed_fields: ["id", "endpoint", "method", "status_code", "response_time_ms", "created_at"]

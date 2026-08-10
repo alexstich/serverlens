@@ -254,6 +254,97 @@ final class DbAggregateTest extends TestCase
         $this->assertSame(100, $params[':_limit']);
     }
 
+    public function testGroupByMayBeEmptyWhenAggregatesGiven(): void
+    {
+        $result = $this->db->handleToolCall('db_aggregate', [
+            'database' => 'test_db',
+            'table' => 'users',
+            'aggregates' => [['fn' => 'max', 'field' => 'id']],
+        ]);
+
+        // Validation passes; the call then fails on the unconfigured connection.
+        $this->assertTrue($result['isError']);
+        $this->assertStringContainsString('authentication failed', $result['content'][0]['text']);
+    }
+
+    public function testAggregateNeedsFieldUnlessCount(): void
+    {
+        $result = $this->db->handleToolCall('db_aggregate', [
+            'database' => 'test_db',
+            'table' => 'users',
+            'group_by' => ['email'],
+            'aggregates' => [['fn' => 'avg']],
+        ]);
+
+        $this->assertTrue($result['isError']);
+        $this->assertStringContainsString('requires a field', $result['content'][0]['text']);
+    }
+
+    public function testAggregateCannotTouchDeniedField(): void
+    {
+        $result = $this->db->handleToolCall('db_aggregate', [
+            'database' => 'test_db',
+            'table' => 'users',
+            'group_by' => ['email'],
+            'aggregates' => [['fn' => 'max', 'field' => 'password_hash']],
+        ]);
+
+        $this->assertTrue($result['isError']);
+        $this->assertStringContainsString('not allowed', $result['content'][0]['text']);
+    }
+
+    public function testOrderByMustNameGroupOrAlias(): void
+    {
+        $result = $this->db->handleToolCall('db_aggregate', [
+            'database' => 'test_db',
+            'table' => 'users',
+            'group_by' => ['email'],
+            'aggregates' => [['fn' => 'count']],
+            'order_by' => ['-nonsense'],
+        ]);
+
+        $this->assertTrue($result['isError']);
+        $this->assertStringContainsString('Order by must reference', $result['content'][0]['text']);
+    }
+
+    public function testMultiAggregateSqlSelectsEveryAlias(): void
+    {
+        $params = [];
+        $selects = new \ReflectionMethod(DbQuery::class, 'buildAggregateSelects');
+        [$selectExtra, $aliases] = $selects->invoke(
+            $this->db,
+            [['fn' => 'count'], ['fn' => 'min', 'field' => 'created_at', 'alias' => 'oldest']],
+            'postgresql',
+        );
+
+        $method = new \ReflectionMethod(DbQuery::class, 'buildAggregateSql');
+        $args = ['users', ['email'], [], null, 'count_desc', 10, 100, 'postgresql', &$params, $selectExtra, ['-count']];
+        $sql = $method->invokeArgs($this->db, $args);
+
+        $this->assertSame(['count', 'oldest'], $aliases);
+        $this->assertSame(
+            'SELECT "email", COUNT(*) AS "count", MIN("created_at") AS "oldest" FROM "users"'
+            . ' GROUP BY "email"'
+            . ' ORDER BY "count" DESC'
+            . ' LIMIT :_limit',
+            $sql,
+        );
+    }
+
+    public function testGroupLessAggregateOmitsGroupBy(): void
+    {
+        $params = [];
+        $selects = new \ReflectionMethod(DbQuery::class, 'buildAggregateSelects');
+        [$selectExtra] = $selects->invoke($this->db, [['fn' => 'count']], 'postgresql');
+
+        $method = new \ReflectionMethod(DbQuery::class, 'buildAggregateSql');
+        $args = ['users', [], [], null, 'count_desc', 10, 100, 'postgresql', &$params, $selectExtra, []];
+        $sql = $method->invokeArgs($this->db, $args);
+
+        $this->assertStringNotContainsString('GROUP BY', $sql);
+        $this->assertStringStartsWith('SELECT COUNT(*) AS "count" FROM "users"', $sql);
+    }
+
     private function buildSql(
         array $groupBy,
         array $filters,
