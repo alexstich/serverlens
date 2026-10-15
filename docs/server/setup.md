@@ -217,6 +217,31 @@ configs:
 - `private_key`
 - `connection_string`, `dsn`, `database_url`
 
+### files — Directory trees
+
+Read-only access to whole directory trees — an application's `runtime/`, upload storage and the like.
+
+```yaml
+files:
+  sources:
+    - name: "app_runtime"
+      path: "/var/www/app/runtime"
+      exclude:                         # globs; match the relative path or any segment of it
+        - "dumps"
+        - "cache/*"
+      redact: []                       # same rules as configs
+      max_read_bytes: 1048576          # default 1 MB per files_read call
+      max_xlsx_bytes: 52428800         # default 50 MB
+```
+
+- Every request names a path **relative** to `path`. The real path (symlinks resolved) must stay inside the tree; excluded entries are invisible to `files_list` and refused by every other tool.
+- `*.key`, `*.pem`, `*.p12`, `*.pfx`, `id_rsa*` and friends, `.env*` and `.ssh` are always excluded.
+- File kind is detected by content, not by extension: a CSV saved as `.xlsx` reads as text.
+- Text is decoded as UTF-8, falling back to cp1251, and passes the same redaction as configs.
+- `.xlsx` is opened with `openpyxl` in read-only mode behind `defusedxml`; a workbook that expands to more than 500 MB is refused.
+- **Exclude anything that would bypass another whitelist** — database dumps, session stores, mail spools with reset links.
+- The SSH user must be able to read the files: usually membership in the web server's group (`www-data`).
+
 ### databases — PostgreSQL connections
 
 ```yaml

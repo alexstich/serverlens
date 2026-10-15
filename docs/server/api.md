@@ -209,6 +209,80 @@ Search within configuration file content.
 
 ---
 
+## Files (FileReader)
+
+All tools take `source` (a file source name) and `path` relative to its root.
+
+### files_sources
+
+Lists file sources and their exclude patterns.
+
+---
+
+### files_list
+
+| Parameter | Type | Required | Description |
+|----------|-----|:---:|----------|
+| `source` | string | yes | File source name |
+| `path` | string | no | Directory, default — the root |
+| `pattern` | string | no | Glob on the entry name (`*.xlsx`) |
+| `recursive` | bool | no | Walk subdirectories; the scan stops after 100 000 entries |
+| `sort` | string | no | `name` (default), `modified` or `size` (both descending) |
+| `limit` | int | no | Max entries, up to 1000 (default 200) |
+| `offset` | int | no | Pagination offset |
+
+**Example response:**
+```json
+{
+  "path": "file_import/accounts/",
+  "total": 2,
+  "offset": 0,
+  "entries": [
+    {"path": "file_import/accounts/1050515", "type": "file", "size": 48213, "modified": "2026-10-14 12:01:13"}
+  ]
+}
+```
+
+---
+
+### files_stat
+
+Size, mtime, `sha256` and the kind detected by content: `text`, `xlsx`, `docx`, `zip`, `ole2` (legacy xls/doc), `pdf`, `image`, `gzip`, `binary`, `empty`. Text files also get `encoding`; workbooks get `sheets` (name, index, `dimensions`, `max_row`, `max_column`).
+
+---
+
+### files_read
+
+| Parameter | Type | Required | Description |
+|----------|-----|:---:|----------|
+| `source` | string | yes | File source name |
+| `path` | string | yes | Text file |
+| `offset` | int | no | First line, 1-based |
+| `lines` | int | no | Number of lines, up to 2000 (default 200) |
+
+Lines come numbered. The header says where to continue: `next offset N`. Binary files are refused with a hint (`files_xlsx` for workbooks).
+
+---
+
+### files_search
+
+Same as `logs_search`, over a text file: `query`, `regex`, `lines` (up to 1000), 5 s time limit.
+
+---
+
+### files_xlsx
+
+| Parameter | Type | Required | Description |
+|----------|-----|:---:|----------|
+| `source` | string | yes | File source name |
+| `path` | string | yes | `.xlsx` workbook |
+| `sheet` | string | no | Sheet name or 1-based index; omitted — list the sheets |
+| `range` | string | no | `A1:F50` (default `A1:Z50`), up to 10 000 cells |
+
+Returns TSV, values as cached by Excel (formulas are not evaluated). Tabs and newlines inside cells are escaped.
+
+---
+
 ## Database (DbQuery)
 
 ### db_list

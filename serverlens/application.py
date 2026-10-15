@@ -11,6 +11,7 @@ from serverlens.mcp.server import Server
 from serverlens.module.config_reader import ConfigReader
 from serverlens.module.config_suggest import ConfigSuggest
 from serverlens.module.db_query import DbQuery
+from serverlens.module.file_reader import FileReader
 from serverlens.module.journal_reader import JournalReader
 from serverlens.module.log_reader import LogReader
 from serverlens.module.system_info import SystemInfo
@@ -85,6 +86,10 @@ class Application:
         if self._config.get_config_sources():
             self._mcp_server.register_module(ConfigReader(self._config))
             print("[ServerLens] Module loaded: ConfigReader", file=sys.stderr)
+
+        if self._config.get_file_sources():
+            self._mcp_server.register_module(FileReader(self._config))
+            print("[ServerLens] Module loaded: FileReader", file=sys.stderr)
 
         if self._config.get_database_connections():
             self._mcp_server.register_module(DbQuery(self._config))
