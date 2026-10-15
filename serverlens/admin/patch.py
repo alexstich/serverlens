@@ -1,7 +1,7 @@
 """Validation and merging of additive config patches.
 
 A *patch* is a small YAML/JSON document shaped like a subset of config.yaml.
-It may only ADD log sources, config sources, database tables/connections and
+It may only ADD log sources, config sources, file sources, database tables/connections and
 system service/stack entries. It can never remove or rewrite anything that
 already exists, and every addition is checked against :mod:`policy`.
 
@@ -40,6 +40,7 @@ def validate_patch(patch: dict[str, Any], current: dict[str, Any]) -> list[str]:
 
     _validate_sources(patch.get("logs"), "logs", current, errors, want_format=True)
     _validate_sources(patch.get("configs"), "configs", current, errors, want_format=False)
+    _validate_sources(patch.get("files"), "files", current, errors, want_format=False)
     _validate_databases(patch.get("databases"), current, errors)
     _validate_system(patch.get("system"), errors)
 
@@ -224,7 +225,7 @@ def merge_patch(current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any
     """
     result = copy.deepcopy(current)
 
-    for kind in ("logs", "configs"):
+    for kind in ("logs", "configs", "files"):
         if kind in patch:
             dst = result.setdefault(kind, {}).setdefault("sources", [])
             existing = {s.get("name") for s in dst if isinstance(s, dict)}
@@ -296,7 +297,7 @@ def summarize_patch(current: dict[str, Any], patch: dict[str, Any]) -> list[str]
     """A short bullet list of what the patch would add. For operator review."""
     lines: list[str] = []
 
-    for kind, label in (("logs", "log source"), ("configs", "config source")):
+    for kind, label in (("logs", "log source"), ("configs", "config source"), ("files", "file source")):
         if kind in patch:
             existing = {
                 s.get("name")

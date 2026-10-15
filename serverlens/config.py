@@ -108,6 +108,11 @@ class Config:
     def get_config_sources(self) -> list[dict[str, Any]]:
         return self.get("configs.sources", []) or []
 
+    # --- Files ---
+
+    def get_file_sources(self) -> list[dict[str, Any]]:
+        return self.get("files.sources", []) or []
+
     # --- Databases ---
 
     def get_database_connections(self) -> list[dict[str, Any]]:

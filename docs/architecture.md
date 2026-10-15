@@ -99,6 +99,7 @@ MCP server running on the remote host.
 |--------|------|-------------|
 | **LogReader** | Read logs | Whitelisted files |
 | **ConfigReader** | Read configs (secrets redacted) | Whitelisted files |
+| **FileReader** | List / read / search files, read xlsx | Whitelisted directory trees |
 | **DbQuery** | Safe database queries | PostgreSQL (read-only user) |
 | **SystemInfo** | System state | shell_exec (systemctl, docker, free, df) |
 | **JournalReader** | Read systemd journal (whitelisted units) | shell_exec (journalctl --no-pager) |

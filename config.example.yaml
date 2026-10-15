@@ -92,6 +92,19 @@ configs:
       redact:
         - "password"
 
+files:
+  sources:
+    # A directory tree served read-only: list, stat, read text, read xlsx.
+    # Paths in requests are relative to `path`; symlinks leaving the tree are refused.
+    # - name: "app_runtime"
+    #   path: "/var/www/app/runtime"
+    #   exclude:                    # globs on the relative path or any path segment
+    #     - "dumps"                 # e.g. DB dumps — would bypass the DB whitelist
+    #     - "sessions"
+    #   redact: []                  # same rules as configs; built-in secret patterns always apply
+    #   max_read_bytes: 1048576     # per files_read call
+    #   max_xlsx_bytes: 52428800    # workbooks above this are not opened
+
 databases:
   connections:
     - name: "app_prod"

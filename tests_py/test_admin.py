@@ -107,6 +107,22 @@ def test_config_source_bad_path_rejected():
     assert errors
 
 
+def test_file_source_accepted_and_merged():
+    patch = {"files": {"sources": [{
+        "name": "app_runtime", "path": "/var/www/app/runtime", "exclude": ["dumps"],
+    }]}}
+    assert patchlib.validate_patch(patch, _base_config()) == []
+    merged = patchlib.merge_patch(_base_config(), patch)
+    assert merged["files"]["sources"][0]["exclude"] == ["dumps"]
+    assert "+ file source: app_runtime → /var/www/app/runtime" in patchlib.summarize_patch(_base_config(), patch)
+
+
+def test_file_source_bad_path_rejected():
+    patch = {"files": {"sources": [{"name": "root_home", "path": "/root"}]}}
+    errors = patchlib.validate_patch(patch, _base_config())
+    assert errors
+
+
 def test_valid_new_table_accepted():
     patch = {"databases": {"connections": [{"name": "app_prod", "tables": [{
         "name": "orders",

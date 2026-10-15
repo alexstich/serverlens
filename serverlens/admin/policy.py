@@ -15,7 +15,7 @@ import re
 
 # Sections the admin CLI is allowed to add to. Everything else is off-limits.
 ALLOWED_SECTIONS: frozenset[str] = frozenset(
-    {"logs", "configs", "databases", "system"}
+    {"logs", "configs", "files", "databases", "system"}
 )
 
 # Sections that must NEVER be touched through the admin channel. Rotating
@@ -69,7 +69,7 @@ def is_sensitive_field(name: str) -> bool:
 # Paths
 # ---------------------------------------------------------------------------
 
-# A new log/config source may only point inside these roots.
+# A new log/config/file source may only point inside these roots.
 ALLOWED_PATH_ROOTS: tuple[str, ...] = (
     "/var/log", "/etc", "/var/www", "/srv", "/opt", "/home",
 )
