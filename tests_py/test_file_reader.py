@@ -31,6 +31,8 @@ def root(tmp_path: Path) -> Path:
     ws.append(["001", "ул. Мира, 1"])
     wb.create_sheet("Помещения").append(["Помещение"])
     wb.save(base / "file_import" / "accounts" / "book.xlsx")
+    # Uploads are stored under their data_file id, without an extension.
+    wb.save(base / "file_import" / "accounts" / "1050515")
 
     # A CSV that arrived with an .xlsx extension.
     (base / "file_import" / "accounts" / "fake.xlsx").write_text("a;b\n1;2\n")
@@ -118,7 +120,7 @@ def test_list_recursive_with_pattern(root):
 
 def test_list_paginates(root):
     data = _json(_call(_reader(root), "files_list", path="file_import/accounts", limit=2, offset=1))
-    assert data["total"] == 4
+    assert data["total"] == 5
     assert len(data["entries"]) == 2
 
 
@@ -196,6 +198,15 @@ def test_xlsx_reads_range_by_sheet_name(root):
     lines = text.split("\n")
     assert lines[0].startswith("# file_import/accounts/book.xlsx [Основные сведения] A1:B5")
     assert lines[1:] == ["Номер ЛС\tАдрес", "001\tул. Мира, 1"]
+
+
+def test_xlsx_without_extension(root):
+    reader = _reader(root)
+    data = _json(_call(reader, "files_stat", path="file_import/accounts/1050515"))
+    assert data["kind"] == "xlsx"
+    assert [s["name"] for s in data["sheets"]] == ["Основные сведения", "Помещения"]
+    text = _text(_call(reader, "files_xlsx", path="file_import/accounts/1050515", sheet="1", range="A2:B2"))
+    assert text.split("\n")[1] == "001\tул. Мира, 1"
 
 
 def test_xlsx_reads_by_index(root):

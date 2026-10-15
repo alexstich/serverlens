@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import io
 import json
 import os
 import re
@@ -467,7 +468,11 @@ class FileReader(ModuleInterface):
         except ImportError:
             return "openpyxl is not installed on the server — rerun scripts/update.sh"
         try:
-            return openpyxl.load_workbook(real, read_only=True, data_only=True)
+            # Given a path, openpyxl insists on an .xlsx extension; uploaded files
+            # are stored without one. A file-like object skips that check.
+            with open(real, "rb") as f:
+                data = io.BytesIO(f.read())
+            return openpyxl.load_workbook(data, read_only=True, data_only=True)
         except Exception as e:  # openpyxl raises a zoo of exception types
             return f"Cannot open workbook: {type(e).__name__}: {e}"
 
