@@ -932,13 +932,22 @@ phase_checks() {
         local venv_pkg="python${py_version}-venv"
         if command -v apt-get &>/dev/null; then
             info "apt-get update && apt-get install -y ${venv_pkg}"
-            apt-get update -qq --allow-releaseinfo-change 2>/dev/null || true
-            apt-get install -y "$venv_pkg" 2>/dev/null
-            $python_cmd -c 'import ensurepip' 2>/dev/null || fail "Не удалось установить ${venv_pkg}. Вручную: apt install ${venv_pkg}"
+            # Package install is best-effort: a stale apt index or a mirror 404
+            # must NOT abort the installer under set -e. The ensurepip re-check
+            # below decides success and prints an actionable message on failure.
+            apt-get update --allow-releaseinfo-change || \
+                warn "apt-get update завершился с ошибкой — индекс может быть устаревшим"
+            apt-get install -y "$venv_pkg" || true
+            $python_cmd -c 'import ensurepip' 2>/dev/null || fail \
+"Не удалось установить ${venv_pkg} (возможно, устаревший индекс apt или 404 на зеркале).
+     Обновите индекс и установите пакет вручную, затем перезапустите установщик:
+         sudo apt-get update
+         sudo apt-get install -y ${venv_pkg}"
             ok "venv + ensurepip (установлен: ${venv_pkg})"
         elif command -v dnf &>/dev/null; then
-            dnf install -y "python3-pip" 2>/dev/null
-            $python_cmd -c 'import ensurepip' 2>/dev/null || fail "Не удалось установить ensurepip. Вручную: dnf install python3-pip"
+            dnf install -y "python3-pip" || true
+            $python_cmd -c 'import ensurepip' 2>/dev/null || fail \
+"Не удалось установить ensurepip. Вручную: sudo dnf install python3-pip"
             ok "venv + ensurepip (установлен)"
         else
             fail "ensurepip отсутствует. Установите: apt install ${venv_pkg}"

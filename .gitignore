@@ -5,4 +5,5 @@ vendor
 __pycache__/
 *.pyc
 .pytest_cache/
-venv/.phpunit.cache/
+venv/
+.phpunit.cache/
