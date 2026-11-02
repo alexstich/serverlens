@@ -164,12 +164,21 @@ You should get JSON with `"serverInfo":{"name":"ServerLens","version":"2.0.0"}`.
 
 ## Step 4. Install the MCP client on your machine
 
-Switch to **your computer** (developer machine):
+Switch to **your computer** (developer machine). The client is the Python package `serverlens_mcp/` in this repository; it needs Python 3.10+ and PyYAML only.
 
 ```bash
 git clone git@github.com:your-org/serverlens.git ~/serverlens
-cd ~/serverlens/mcp-client
-composer install
+cd ~/serverlens
+python3 -m venv venv
+venv/bin/pip install pyyaml
+```
+
+> Don't install `requirements.txt` here — those are server dependencies. A venv is needed because Homebrew Python and recent Linux distributions refuse a global `pip install`, and the macOS system `python3` has no PyYAML.
+
+Check that the client starts:
+
+```bash
+PYTHONPATH=~/serverlens ~/serverlens/venv/bin/python -m serverlens_mcp --help
 ```
 
 ---
@@ -182,7 +191,7 @@ Copy the template:
 
 ```bash
 mkdir -p ~/.serverlens
-cp ~/serverlens/mcp-client/config.example.yaml ~/.serverlens/config.yaml
+cp ~/serverlens/serverlens_mcp/config.example.yaml ~/.serverlens/config.yaml
 ```
 
 Open `~/.serverlens/config.yaml` and fill in the **remote server** where you installed ServerLens (steps 1–3):
@@ -198,10 +207,9 @@ servers:
       user: "deploy"                  # SSH user (same as you use for SSH)
       port: 22
       key: "~/.ssh/id_ed25519"       # path to SSH key ON YOUR MACHINE
-    remote:
-      serverlens_path: "/opt/serverlens/bin/serverlens"
-      config_path: "/etc/serverlens/config.yaml"
 ```
+
+On the server the client runs `serverlens serve --stdio` (the installer created `/usr/local/bin/serverlens`), so nothing else is needed. To run a different command, see [MCP client → Remote command](client.md#remote-command).
 
 > **Multiple servers?** Add another block with a different name:
 > ```yaml
@@ -210,20 +218,19 @@ servers:
 >       host: "5.6.7.8"
 >       user: "deploy"
 >       key: "~/.ssh/id_ed25519"
->     remote:
->       serverlens_path: "/opt/serverlens/bin/serverlens"
->       config_path: "/etc/serverlens/config.yaml"
 > ```
 
 Verify SSH works:
 
 ```bash
-ssh -i ~/.ssh/id_ed25519 deploy@1.2.3.4 "serverlens validate-config --config /etc/serverlens/config.yaml"
+ssh -o BatchMode=yes -i ~/.ssh/id_ed25519 deploy@1.2.3.4 "serverlens validate-config"
 ```
 
 ---
 
 ## Step 6. Connect to Cursor
+
+Replace `YOUR_USERNAME` with your user name. Paths must be **absolute** — `~` is not expanded in `mcp.json`.
 
 ### Option A — global (all servers)
 
@@ -233,12 +240,12 @@ Add to `~/.cursor/mcp.json` (create the file if missing):
 {
   "mcpServers": {
     "serverlens": {
-      "command": "php",
+      "command": "/Users/YOUR_USERNAME/serverlens/venv/bin/python",
       "args": [
-        "/Users/YOUR_USERNAME/serverlens/mcp-client/bin/serverlens-mcp",
-        "--config",
-        "/Users/YOUR_USERNAME/.serverlens/config.yaml"
-      ]
+        "-m", "serverlens_mcp",
+        "--config", "/Users/YOUR_USERNAME/.serverlens/config.yaml"
+      ],
+      "env": { "PYTHONPATH": "/Users/YOUR_USERNAME/serverlens" }
     }
   }
 }
@@ -252,14 +259,13 @@ Create `.cursor/mcp.json` **in the project root** and add `--servers` with comma
 {
   "mcpServers": {
     "serverlens": {
-      "command": "php",
+      "command": "/Users/YOUR_USERNAME/serverlens/venv/bin/python",
       "args": [
-        "/Users/YOUR_USERNAME/serverlens/mcp-client/bin/serverlens-mcp",
-        "--config",
-        "/Users/YOUR_USERNAME/.serverlens/config.yaml",
-        "--servers",
-        "production"
-      ]
+        "-m", "serverlens_mcp",
+        "--config", "/Users/YOUR_USERNAME/.serverlens/config.yaml",
+        "--servers", "production"
+      ],
+      "env": { "PYTHONPATH": "/Users/YOUR_USERNAME/serverlens" }
     }
   }
 }
@@ -269,18 +275,17 @@ For multiple servers: `"--servers", "production,staging"`.
 
 This way different projects can access different servers from the same `config.yaml`. Server names must match keys under `servers:` in your config.
 
-> **Important:** paths must be **absolute**.
+> **Claude Code, Codex CLI, Claude Desktop:** see [MCP client → Connect to your LLM tool](client.md#4-connect-to-your-llm-tool).
 
 Restart Cursor. In MCP logs (Output → MCP) you should see:
 
 ```
 [MCP] Config: /Users/.../.serverlens/config.yaml
 [MCP] Server filter: production                     ← only with --servers
-[MCP] Connecting to server 'production'...
-[MCP:production] Initialized: ServerLens v2.0.0
-[MCP] Discovered 17 tools on 'production'
-[MCP] Ready: 1 server(s), 17 remote tool(s), 2 MCP tools
+[MCP] Ready (lazy connect): 1 server(s) configured (production), 2 MCP tools
 ```
+
+Servers are connected on first use; then the log shows `Initialized: ServerLens v2.0.0` and `Discovered N tools on 'production'`. If something goes wrong, see [MCP client → Troubleshooting](client.md#troubleshooting).
 
 ---
 
@@ -306,7 +311,6 @@ The installer is idempotent — it will update files in `/opt/serverlens`, rebui
 ```bash
 cd ~/serverlens
 git pull
-cd mcp-client && composer install
 ```
 
 Restart Cursor so the MCP client picks up changes.
@@ -330,4 +334,4 @@ You can phrase requests in **natural language** — Cursor will call `serverlens
 | [Architecture](architecture.md) | System layout, data flow, diagrams |
 | [Server setup](server/setup.md) | Detailed configuration of all ServerLens modules |
 | [API Reference](server/api.md) | Full reference for remote ServerLens tools (logs, configs, DB, system) |
-| [MCP client](../mcp-client/docs/README.md) | MCP proxy documentation |
+| [MCP client](client.md) | Installing and configuring the MCP client |

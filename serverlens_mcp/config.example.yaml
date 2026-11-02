@@ -1,0 +1,50 @@
+# ═══════════════════════════════════════════
+# ServerLens MCP Client — Configuration
+# ═══════════════════════════════════════════
+#
+# This file describes REMOTE servers where ServerLens is installed.
+# The MCP client (serverlens_mcp) runs on YOUR machine and connects
+# to the servers over SSH.
+#
+# The client runs `serverlens serve --stdio` on the server over SSH.
+# The installer puts the `serverlens` command into /usr/local/bin.
+#
+# Setup:
+#   mkdir -p ~/.serverlens
+#   cp serverlens_mcp/config.example.yaml ~/.serverlens/config.yaml
+#   nano ~/.serverlens/config.yaml
+#
+# The client calls the system `ssh`, so ~/.ssh/config is honoured
+# (Host aliases, IdentityFile, ProxyJump...). Note: `port` is always
+# passed as `-p` (default 22), so a Port from ~/.ssh/config is ignored —
+# set `port` here instead.
+
+servers:
+
+  # Server name — any label you like.
+  # Used in serverlens_call: {"server": "production", "tool": "logs_tail", ...}
+  # and in --servers to pick a subset per project.
+  production:
+    ssh:
+      host: "1.2.3.4"              # required: IP, hostname or ~/.ssh/config alias
+      user: "deploy"                # required
+      port: 22                      # default 22
+      key: "~/.ssh/id_ed25519"      # optional; ~ is expanded. Omit to use ~/.ssh/config / ssh-agent
+
+  # Another server — just SSH credentials, nothing else.
+  # staging:
+  #   ssh:
+  #     host: "5.6.7.8"
+  #     user: "deploy"
+  #     key: "~/.ssh/id_ed25519"
+
+  # Advanced: extra ssh options and a custom remote command (rarely needed).
+  # Built-in defaults: ConnectTimeout=10, ServerAliveInterval=15, ServerAliveCountMax=3.
+  # custom:
+  #   ssh:
+  #     host: "9.10.11.12"
+  #     user: "deploy"
+  #     key: "~/.ssh/id_ed25519"
+  #     options:
+  #       ServerAliveInterval: "30"
+  #   command: "/opt/serverlens/venv/bin/python -m serverlens serve --stdio --config /etc/serverlens/config.yaml"

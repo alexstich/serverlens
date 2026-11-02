@@ -9,8 +9,8 @@ A secure read-only MCP server for diagnosing remote servers. Connect it to any L
 | Tool | How to connect |
 |------|---------------|
 | **Cursor** | Add to `.cursor/mcp.json` — works out of the box |
-| **Claude Code** | Add to `.claude/settings.json` under `mcpServers` |
-| **OpenAI Codex CLI** | Add to `~/.codex/config.json` under `mcpServers` |
+| **Claude Code** | `claude mcp add serverlens ...` or `.mcp.json` in the project |
+| **OpenAI Codex CLI** | Add to `~/.codex/config.toml` under `[mcp_servers.serverlens]` |
 | **Claude Desktop** | Add to `claude_desktop_config.json` |
 | **Any MCP client** | ServerLens uses standard MCP stdio transport |
 
@@ -69,9 +69,9 @@ Within a table, `allowed_fields` is the boundary that matters: a column listed t
 | Component | Where | What it does |
 |-----------|-----|------------|
 | **ServerLens** (`serverlens/`) | Remote server | Read-only access to logs, configs, DB, system information |
-| **MCP proxy** (`mcp-client/`) | Developer machine | Local MCP server: dispatch model (`serverlens_list` / `serverlens_call`), auto-reconnect on disconnect, built-in SSH keepalive |
+| **MCP client** (`serverlens_mcp/`) | Developer machine | Local MCP server: dispatch model (`serverlens_list` / `serverlens_call`), auto-reconnect on disconnect, built-in SSH keepalive |
 
-The LLM tool does not talk SSH directly — it speaks to the local MCP proxy, which connects to servers on its own.
+The LLM tool does not talk SSH directly — it speaks to the local MCP client, which connects to servers on its own.
 
 ## Installation
 
@@ -80,20 +80,34 @@ The LLM tool does not talk SSH directly — it speaks to the local MCP proxy, wh
 Short sequence:
 
 1. **On the server:** clone the repo, run `scripts/install.sh`, configure `/etc/serverlens/config.yaml`
-2. **On your machine:** `cd mcp-client && composer install`, configure `~/.serverlens/config.yaml` with SSH settings
-3. **In your LLM tool:** add the MCP proxy to the MCP config (e.g. `.cursor/mcp.json` for Cursor), restart
+2. **On your machine:** clone the repo, create a venv with `pyyaml`, copy `serverlens_mcp/config.example.yaml` to `~/.serverlens/config.yaml` and fill in SSH settings
+3. **In your LLM tool:** add `python -m serverlens_mcp` to the MCP config (e.g. `.cursor/mcp.json` for Cursor), restart
+
+MCP config (paths must be absolute):
+
+```json
+{
+  "mcpServers": {
+    "serverlens": {
+      "command": "/Users/YOU/serverlens/venv/bin/python",
+      "args": ["-m", "serverlens_mcp", "--config", "/Users/YOU/.serverlens/config.yaml"],
+      "env": { "PYTHONPATH": "/Users/YOU/serverlens" }
+    }
+  }
+}
+```
 
 **Per-project server access:** use `--servers` to connect only specific servers in a project:
 
 ```json
-"args": ["...", "--config", "~/.serverlens/config.yaml", "--servers", "production,staging"]
+"args": ["-m", "serverlens_mcp", "--config", "/Users/YOU/.serverlens/config.yaml", "--servers", "production,staging"]
 ```
 
-Define all servers once in `config.yaml`, then select which ones each project needs via `--servers` (comma-separated). See [MCP proxy docs](mcp-client/docs/README.md#per-project-server-selection---servers).
+Define all servers once in `config.yaml`, then select which ones each project needs via `--servers` (comma-separated). See [MCP client docs](docs/client.md#per-project-server-selection---servers).
 
-## Tools (MCP proxy v2)
+## Tools (MCP client v2)
 
-The LLM model sees **two** proxy tools; remote operations go through them:
+The LLM model sees **two** client tools; remote operations go through them:
 
 | Tool | Purpose |
 |------------|------------|
@@ -110,10 +124,10 @@ On the server, all ServerLens read-only tools remain available (logs, configs, D
 | [Architecture](docs/architecture.md) | How the system is built, components, data flow |
 | [Server setup](docs/server/setup.md) | Detailed ServerLens configuration |
 | [API Reference](docs/server/api.md) | Reference for all tools |
-| [MCP proxy](mcp-client/docs/README.md) | Installing and configuring the MCP client |
+| [MCP client](docs/client.md) | Installing and configuring the MCP client |
 
 ## Stack
 
 **Server:** Python 3.10+, aiohttp, PyYAML, psycopg2, argon2-cffi
 
-**MCP proxy:** PHP 8.1+, Symfony YAML
+**MCP client:** Python 3.10+, PyYAML

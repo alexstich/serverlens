@@ -4,14 +4,14 @@ Complete reference for tools available through the MCP protocol.
 
 ## Dispatch model in MCP Proxy
 
-When Cursor is connected via **ServerLens MCP Proxy** (`mcp-client/`), the client sees not individual remote tools but two universal tools:
+When Cursor is connected via **ServerLens MCP Proxy** (`serverlens_mcp/`), the client sees not individual remote tools but two universal tools:
 
 - **`serverlens_list`** — no arguments: list of servers; with `{ "server": "<name>" }`: list of tools on that server (equivalent to remote `tools/list`).
 - **`serverlens_call`** — single call entry point: `{ "server": "<name>", "tool": "<tool_name>", "arguments": { ... } }`. Arguments match the parameters described below for each tool (for example, for `logs_tail` — an object with `source`, `lines`, etc.).
 
 Direct connection to ServerLens on the server (stdio/SSE without the proxy) still uses the tool names from this document without wrapping.
 
-See also: [Architecture](../architecture.md) | [MCP proxy](../../mcp-client/docs/README.md)
+See also: [Architecture](../architecture.md) | [MCP client](../client.md)
 
 ---
 

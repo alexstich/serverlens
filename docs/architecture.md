@@ -10,7 +10,7 @@
 │                                                                              │
 │   ┌─────────────┐    stdio (JSON-RPC)    ┌──────────────────────────┐       │
 │   │   Cursor /   │◄────────────────────►│   ServerLens MCP Proxy    │       │
-│   │ Claude Desktop│                      │   (mcp-client/)           │       │
+│   │ Claude Desktop│                      │   (serverlens_mcp/)       │       │
 │   │  (MCP client)│                      │  only 2 tools:            │       │
 │   └─────────────┘                       │  serverlens_list,        │       │
 │                                          │  serverlens_call         │       │
@@ -58,11 +58,11 @@
 
 ## Components
 
-### 1. MCP Proxy (mcp-client/)
+### 1. MCP Proxy (serverlens_mcp/)
 
 Local MCP server on the developer machine.
 
-**Purpose:** Cursor does not speak SSH. MCP Proxy bridges Cursor and remote servers.
+**Purpose:** Cursor does not speak SSH. MCP Proxy bridges Cursor and remote servers. Installation and configuration: [client.md](client.md).
 
 **Protocol:** stdio (JSON-RPC 2.0) — Cursor starts it as a subprocess.
 
@@ -82,7 +82,7 @@ Local MCP server on the developer machine.
 - Return responses to Cursor
 
 **Lifecycle:**
-1. Cursor starts `serverlens-mcp` → SSH sessions come up → ServerLens (stdio) on each server
+1. Cursor starts `python -m serverlens_mcp` → on the first call to a server an SSH session comes up → ServerLens (stdio) on that server
 2. Cursor calls `serverlens_list()` — sees servers; optionally `serverlens_list({ server })` — tools on that server
 3. For actions — `serverlens_call({ server, tool, arguments })`; proxy routes to the SSH channel and forwards `tools/call` to remote ServerLens
 4. Response goes back to Cursor; if SSH fails, proxy reconnects and retries on the next call
@@ -235,11 +235,12 @@ serverlens/
 │   └── audit/
 │       └── audit_logger.py
 │
-├── serverlens_mcp/             # Python MCP proxy (alternative)
-│   ├── __main__.py
+├── serverlens_mcp/             # MCP proxy (developer machine)
+│   ├── __main__.py             # Client CLI: python -m serverlens_mcp
 │   ├── config.py
-│   ├── mcp_proxy.py
-│   └── ssh_connection.py
+│   ├── config.example.yaml     # SSH configuration template
+│   ├── mcp_proxy.py            # MCP proxy
+│   └── ssh_connection.py       # SSH connection
 │
 ├── pyproject.toml              # Server dependencies (Python)
 ├── requirements.txt
@@ -249,19 +250,10 @@ serverlens/
 ├── bin/serverlens              # Server CLI (PHP, legacy)
 ├── composer.json               # Server dependencies (PHP)
 │
-├── mcp-client/                 # MCP proxy (developer machine, PHP)
-│   ├── src/
-│   │   ├── Config.php
-│   │   ├── SshConnection.php   # SSH connection
-│   │   └── McpProxy.php        # MCP proxy
-│   ├── bin/serverlens-mcp      # Client CLI
-│   ├── composer.json
-│   ├── config.example.yaml     # SSH configuration
-│   └── docs/
-│       └── README.md           # MCP client docs
-│
 ├── docs/                       # Documentation
 │   ├── architecture.md         # This document
+│   ├── quickstart.md           # Installation from scratch
+│   ├── client.md               # MCP client (developer machine)
 │   └── server/
 │       ├── setup.md            # Server installation
 │       └── api.md              # API reference
@@ -297,6 +289,6 @@ serverlens/
 
 | Piece | Technology | Rationale |
 |-------|------------|-----------|
-| Language | **PHP 8.1+** | Lightweight stdio proxy |
-| Configuration | **Symfony YAML** | YAML config parsing |
-| SSH | **openssh-client** (via proc_open) | Standard SSH, no PHP extensions |
+| Language | **Python 3.10+** | Lightweight stdio proxy, standard library only |
+| Configuration | **PyYAML** | YAML config parsing (the only third-party dependency) |
+| SSH | **openssh-client** (via subprocess) | Standard SSH, honours `~/.ssh/config` |

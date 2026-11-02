@@ -1197,13 +1197,13 @@ phase_summary() {
     echo -e "  ${BOLD}Step 1.${NC} Clone the repository and install dependencies:"
     echo ""
     echo "    git clone <repo-url> ~/serverlens"
-    echo "    cd ~/serverlens && pip install -r requirements.txt"
+    echo "    cd ~/serverlens && python3 -m venv venv && venv/bin/pip install pyyaml"
     echo ""
 
     echo -e "  ${BOLD}Step 2.${NC} Create client config:"
     echo ""
     echo "    mkdir -p ~/.serverlens"
-    echo "    cp ~/serverlens/mcp-client/config.example.yaml ~/.serverlens/config.yaml"
+    echo "    cp ~/serverlens/serverlens_mcp/config.example.yaml ~/.serverlens/config.yaml"
     echo ""
 
     echo -e "  ${BOLD}Step 3.${NC} Edit ${CYAN}~/.serverlens/config.yaml${NC} — add this server:"
@@ -1216,14 +1216,15 @@ phase_summary() {
     echo "          key: \"~/.ssh/id_ed25519\""
     echo ""
 
-    echo -e "  ${BOLD}Step 4.${NC} Add to ${CYAN}~/.cursor/mcp.json${NC} (on your machine):"
+    echo -e "  ${BOLD}Step 4.${NC} Add to ${CYAN}~/.cursor/mcp.json${NC} (on your machine, absolute paths only):"
     echo ""
     echo "    {"
     echo "      \"mcpServers\": {"
     echo "        \"serverlens\": {"
-    echo "          \"command\": \"python3\","
+    echo "          \"command\": \"/Users/YOU/serverlens/venv/bin/python\","
     echo "          \"args\": [\"-m\", \"serverlens_mcp\","
-    echo "                   \"--config\", \"~/.serverlens/config.yaml\"]"
+    echo "                   \"--config\", \"/Users/YOU/.serverlens/config.yaml\"],"
+    echo "          \"env\": { \"PYTHONPATH\": \"/Users/YOU/serverlens\" }"
     echo "        }"
     echo "      }"
     echo "    }"
@@ -1231,9 +1232,9 @@ phase_summary() {
 
     echo -e "  ${BOLD}Step 5.${NC} Restart Cursor. In Output -> MCP you should see:"
     echo ""
-    echo "    [MCP] Ready: 1 server(s), N remote tool(s), 2 MCP tools"
+    echo "    [MCP] Ready (lazy connect): 1 server(s) configured (production), 2 MCP tools"
     echo ""
-    echo -e "  Full guide: ${CYAN}docs/quickstart.md${NC} (steps 4-6)"
+    echo -e "  Full guide: ${CYAN}docs/quickstart.md${NC} (steps 4-6), client details: ${CYAN}docs/client.md${NC}"
     echo ""
 }
 
