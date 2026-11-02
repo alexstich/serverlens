@@ -76,6 +76,8 @@ The LLM tool does not talk SSH directly — it speaks to the local MCP client, w
 ## Installation
 
 > **Full step-by-step guide: [docs/quickstart.md](docs/quickstart.md)**
+>
+> **Let an AI agent set up the client:** give Claude Code (or another agent) [docs/llm-install.md](docs/llm-install.md).
 
 Short sequence:
 
@@ -125,6 +127,7 @@ On the server, all ServerLens read-only tools remain available (logs, configs, D
 | [Server setup](docs/server/setup.md) | Detailed ServerLens configuration |
 | [API Reference](docs/server/api.md) | Reference for all tools |
 | [MCP client](docs/client.md) | Installing and configuring the MCP client |
+| [MCP client — guide for an AI agent](docs/llm-install.md) | Instructions an agent (Claude Code, Cursor, Codex) follows to install and connect the client |
 
 ## Stack
 
