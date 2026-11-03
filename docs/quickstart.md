@@ -178,8 +178,11 @@ venv/bin/pip install pyyaml
 Check that the client starts:
 
 ```bash
-PYTHONPATH=~/serverlens ~/serverlens/venv/bin/python -m serverlens_mcp --help
+cd ~/serverlens
+PYTHONPATH="$PWD" venv/bin/python -m serverlens_mcp --help
 ```
+
+> Not sure what the venv is, where Python ended up, or which paths go into the MCP config? [MCP client → Installation](client.md#installation) explains each path step by step and has commands that print a ready config.
 
 ---
 
@@ -232,6 +235,8 @@ ssh -o BatchMode=yes -i ~/.ssh/id_ed25519 deploy@1.2.3.4 "serverlens validate-co
 
 Replace `YOUR_USERNAME` with your user name. Paths must be **absolute** — `~` is not expanded in `mcp.json`.
 
+The config needs three paths: the venv Python (`~/serverlens/venv/bin/python`), the repository root (`~/serverlens`) and the client config (`~/.serverlens/config.yaml`). To get them printed as a ready JSON block with your real paths, see [MCP client → Connect to your LLM tool](client.md#6-connect-to-your-llm-tool).
+
 ### Option A — global (all servers)
 
 Add to `~/.cursor/mcp.json` (create the file if missing):
@@ -275,7 +280,7 @@ For multiple servers: `"--servers", "production,staging"`.
 
 This way different projects can access different servers from the same `config.yaml`. Server names must match keys under `servers:` in your config.
 
-> **Claude Code, Codex CLI, Claude Desktop:** see [MCP client → Connect to your LLM tool](client.md#4-connect-to-your-llm-tool).
+> **Claude Code, Codex CLI, Claude Desktop:** see [MCP client → Connect to your LLM tool](client.md#6-connect-to-your-llm-tool).
 
 Restart Cursor. In MCP logs (Output → MCP) you should see:
 
